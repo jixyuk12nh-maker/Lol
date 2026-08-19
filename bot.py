@@ -73,6 +73,20 @@ async def create_or_update_channel(guild, name):
     
     return channel
 
+# ========== 여기서부터 임베드 명령어 추가 ==========
+
+@tree.command(name="임베드", description="Embed 메시지를 생성합니다")
+@app_commands.describe(내용="표시할 내용")
+async def embed_command(interaction: discord.Interaction, 내용: str):
+    """Embed 메시지 생성"""
+    embed = discord.Embed(
+        description=내용,
+        color=0x00ff00
+    )
+    await interaction.response.send_message(embed=embed)
+
+# ========== 여기까지 임베드 명령어 추가 ==========
+
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} 실행됨")
