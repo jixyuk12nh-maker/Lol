@@ -2,6 +2,7 @@ import os
 import discord
 from discord import app_commands
 import re
+import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -32,19 +33,14 @@ def get_server_emojis(guild):
     return emojis
 
 def replace_emoji(text, guild):
-    """
-    :이름: 형식만 서버 이모지로 변환
-    <:이름:ID> 형식은 그대로 유지
-    """
+    """:이름: 형식만 서버 이모지로 변환"""
     if not text or not guild:
         return text
     
     emojis = get_server_emojis(guild)
     
-    # :이름: 형식만 변환
     def replace_match(match):
         name = match.group(1)
-        # 서버에 있는 이모지만 변환, 없으면 원본 유지
         return emojis.get(name, match.group(0))
     
     return re.sub(r':([a-zA-Z0-9_]+):', replace_match, text)
@@ -70,57 +66,72 @@ async def embed_command(
     이미지: str = None,
     썸네일: str = None
 ):
-    if not interaction.guild:
-        await interaction.response.send_message(
-            "이 명령어는 서버에서만 사용 가능합니다.",
-            ephemeral=True
-        )
-        return
-    
-    # Embed 생성
-    embed = discord.Embed()
-    
-    # 색상 설정
-    if 색상:
-        try:
-            color_hex = 색상.lstrip('#')
-            embed.color = int(color_hex, 16)
-        except ValueError:
+    try:
+        # 먼저 응답을 보냄 (지연 방지)
+        await interaction.response.defer()
+        
+        if not interaction.guild:
+            await interaction.followup.send(
+                "이 명령어는 서버에서만 사용 가능합니다.",
+                ephemeral=True
+            )
+            return
+        
+        # Embed 생성
+        embed = discord.Embed()
+        
+        # 색상 설정
+        if 색상:
+            try:
+                color_hex = 색상.lstrip('#')
+                embed.color = int(color_hex, 16)
+            except ValueError:
+                embed.color = 0x00ff00
+        else:
             embed.color = 0x00ff00
-    else:
-        embed.color = 0x00ff00
-    
-    # 제목 설정 (이모지 변환)
-    if 제목:
-        embed.title = replace_emoji(제목, interaction.guild)
-    
-    # 설명 설정 (이모지 변환)
-    if 설명:
-        embed.description = replace_emoji(설명, interaction.guild)
-    
-    # 푸터 설정 (이모지 변환)
-    if 푸터:
-        embed.set_footer(text=replace_emoji(푸터, interaction.guild))
-    
-    # 이미지 설정
-    if 이미지:
-        embed.set_image(url=이미지)
-    
-    # 썸네일 설정
-    if 썸네일:
-        embed.set_thumbnail(url=썸네일)
-    
-    # 최소 하나의 필드 확인
-    if not (제목 or 설명 or 푸터):
-        embed.description = "서버 커스텀 이모지를 사용해보세요! 😊\n\n예시: :Potassium:"
-    
-    # "사용함" 메시지 안 뜨게 하기 - 응답을 숨김 처리
-    await interaction.response.send_message(embed=embed)
+        
+        # 제목 설정 (이모지 변환)
+        if 제목:
+            embed.title = replace_emoji(제목, interaction.guild)
+        
+        # 설명 설정 (이모지 변환)
+        if 설명:
+            embed.description = replace_emoji(설명, interaction.guild)
+        
+        # 푸터 설정 (이모지 변환)
+        if 푸터:
+            embed.set_footer(text=replace_emoji(푸터, interaction.guild))
+        
+        # 이미지 설정
+        if 이미지:
+            embed.set_image(url=이미지)
+        
+        # 썸네일 설정
+        if 썸네일:
+            embed.set_thumbnail(url=썸네일)
+        
+        # 최소 하나의 필드 확인
+        if not (제목 or 설명 or 푸터):
+            embed.description = "서버 커스텀 이모지를 사용해보세요! 😊\n\n예시: :Potassium:"
+        
+        # 임베드 전송
+        await interaction.followup.send(embed=embed)
+        
+    except Exception as e:
+        try:
+            await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
+        except:
+            pass
 
 @bot.event
 async def on_ready():
     print(f"✅ {bot.user} 실행됨!")
-    await tree.sync()
+    
+    try:
+        await tree.sync()
+        print("✅ 슬래시 명령어 동기화 완료!")
+    except Exception as e:
+        print(f"❌ 명령어 동기화 실패: {e}")
     
     # 모든 서버 이모지 캐시
     for guild in bot.guilds:
@@ -128,6 +139,7 @@ async def on_ready():
     
     print(f"📊 서버 {len(bot.guilds)}개 연결됨")
     print(f"🎨 총 이모지 수: {sum(len(guild.emojis) for guild in bot.guilds)}개")
+    print("🟢 봇이 완전히 준비되었습니다!")
 
 @bot.event
 async def on_guild_emojis_update(guild, before, after):
@@ -136,6 +148,10 @@ async def on_guild_emojis_update(guild, before, after):
         del emoji_cache[guild.id]
     get_server_emojis(guild)
     print(f"🔄 {guild.name} 서버 이모지 업데이트됨")
+
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f"❌ 에러 발생: {event}")
 
 # 실행
 if __name__ == "__main__":
