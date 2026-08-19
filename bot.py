@@ -23,7 +23,6 @@ def get_server_emojis(guild):
     
     emojis = {}
     for emoji in guild.emojis:
-        # 이미 <:name:id> 형식으로 저장
         if emoji.animated:
             emojis[emoji.name] = f"<a:{emoji.name}:{emoji.id}>"
         else:
@@ -34,27 +33,21 @@ def get_server_emojis(guild):
 
 def replace_emoji(text, guild):
     """
-    텍스트 내의 이모지를 변환
-    1. :이름: -> <:이름:ID> (서버 이모지로 변환)
-    2. <:이름:ID> 형식은 그대로 유지
-    3. 없는 이모지는 텍스트로 유지
+    :이름: 형식만 서버 이모지로 변환
+    <:이름:ID> 형식은 그대로 유지
     """
     if not text or not guild:
         return text
     
     emojis = get_server_emojis(guild)
     
-    # 1. :이름: 형식 변환
-    def replace_colon_emoji(match):
+    # :이름: 형식만 변환
+    def replace_match(match):
         name = match.group(1)
-        # 서버에 있는 이모지만 변환
+        # 서버에 있는 이모지만 변환, 없으면 원본 유지
         return emojis.get(name, match.group(0))
     
-    text = re.sub(r':([a-zA-Z0-9_]+):', replace_colon_emoji, text)
-    
-    # 2. <:이름:ID> 또는 <a:이름:ID> 형식은 그대로 유지 (검증만)
-    # 이미 올바른 형식이면 그대로 둠
-    return text
+    return re.sub(r':([a-zA-Z0-9_]+):', replace_match, text)
 
 @tree.command(
     name="임베드",
@@ -77,8 +70,6 @@ async def embed_command(
     이미지: str = None,
     썸네일: str = None
 ):
-    """임베드 생성 명령어"""
-    
     if not interaction.guild:
         await interaction.response.send_message(
             "이 명령어는 서버에서만 사용 가능합니다.",
@@ -95,7 +86,7 @@ async def embed_command(
             color_hex = 색상.lstrip('#')
             embed.color = int(color_hex, 16)
         except ValueError:
-            embed.color = 0x00ff00  # 기본값
+            embed.color = 0x00ff00
     else:
         embed.color = 0x00ff00
     
@@ -122,10 +113,8 @@ async def embed_command(
     # 최소 하나의 필드 확인
     if not (제목 or 설명 or 푸터):
         embed.description = "서버 커스텀 이모지를 사용해보세요! 😊\n\n예시: :Potassium:"
-
-    # 기본 타임스탬프 추가 (선택사항)
-    embed.timestamp = discord.utils.utcnow()
     
+    # "사용함" 메시지 안 뜨게 하기 - 응답을 숨김 처리
     await interaction.response.send_message(embed=embed)
 
 @bot.event
