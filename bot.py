@@ -1,94 +1,107 @@
 import os
 import discord
 from discord import app_commands
-import re
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
+intents.members = True
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-# 서버 이모지 캐시
-emoji_cache = {}
+# 설정
+CHANNEL_NAME = "서버-정보"
 
-def get_emojis(guild):
-    """서버 이모지 가져오기"""
-    if not guild:
-        return {}
+async def create_info_channel(guild):
+    """서버 정보 채널 생성"""
+    # 기존 채널 찾기
+    for channel in guild.channels:
+        if channel.name == CHANNEL_NAME and isinstance(channel, discord.TextChannel):
+            return channel
     
-    if guild.id in emoji_cache:
-        return emoji_cache[guild.id]
-    
-    emojis = {}
-    for emoji in guild.emojis:
-        if emoji.animated:
-            emojis[emoji.name] = f"<a:{emoji.name}:{emoji.id}>"
-        else:
-            emojis[emoji.name] = f"<:{emoji.name}:{emoji.id}>"
-    
-    emoji_cache[guild.id] = emojis
-    return emojis
-
-def convert_emoji(text, guild):
-    """:이름: -> 실제 이모지로 변환"""
-    if not text or not guild:
-        return text
-    
-    emojis = get_emojis(guild)
-    
-    def replace(match):
-        name = match.group(1)
-        return emojis.get(name, match.group(0))
-    
-    return re.sub(r':([a-zA-Z0-9_]+):', replace, text)
-
-@tree.command(name="임베드", description="이모지가 포함된 Embed 생성")
-@app_commands.describe(
-    내용="Embed에 표시할 내용 (이모지: :이름: 형식)"
-)
-async def embed_cmd(
-    interaction: discord.Interaction,
-    내용: str
-):
-    # 바로 응답
-    await interaction.response.send_message("⏳ 생성 중...", ephemeral=True)
-    
-    try:
-        # 이모지 변환
-        converted_text = convert_emoji(내용, interaction.guild)
-        
-        # Embed 생성
-        embed = discord.Embed(
-            description=converted_text,
-            color=0x5865F2  # Discord 블루
+    # 새 채널 생성
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=False
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_messages=True
         )
-        
-        # 원본 메시지 수정
-        await interaction.edit_original_response(content=None, embed=embed)
-        
-    except Exception as e:
-        await interaction.edit_original_response(content=f"❌ 오류: {str(e)}")
+    }
+    
+    channel = await guild.create_text_channel(
+        CHANNEL_NAME,
+        overwrites=overwrites,
+        reason="서버 정보 채널 생성"
+    )
+    
+    return channel
+
+async def update_info(channel):
+    """정보 업데이트"""
+    guild = channel.guild
+    
+    # 멤버 수 계산
+    total = guild.member_count
+    bots = sum(1 for m in guild.members if m.bot)
+    humans = total - bots
+    
+    # 텍스트로 표시 (이모지 없이)
+    content = f"""
+・Humans: {humans}
+・Bots: {bots}
+・Members: {total}
+    """.strip()
+    
+    # 기존 메시지 찾기
+    async for msg in channel.history(limit=10):
+        if msg.author == bot.user and not msg.embeds:
+            await msg.edit(content=content)
+            return
+    
+    # 없으면 새로 보내기
+    await channel.send(content)
 
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} 로그인됨")
+    print(f"✅ {bot.user} 실행됨")
     await tree.sync()
+    print("✅ 명령어 동기화 완료")
     
-    # 캐시 초기화
+    # 모든 서버에 채널 생성 및 업데이트
     for guild in bot.guilds:
-        get_emojis(guild)
-    
-    print(f"📊 서버 {len(bot.guilds)}개")
-    print(f"🎨 총 이모지: {sum(len(guild.emojis) for guild in bot.guilds)}개")
+        channel = await create_info_channel(guild)
+        await update_info(channel)
+        print(f"✅ {guild.name} 서버 정보 채널 준비 완료")
 
 @bot.event
-async def on_guild_emojis_update(guild, before, after):
-    """이모지 변경시 캐시 갱신"""
-    if guild.id in emoji_cache:
-        del emoji_cache[guild.id]
-    get_emojis(guild)
+async def on_member_join(member):
+    """새 멤버 입장"""
+    channel = discord.utils.get(member.guild.channels, name=CHANNEL_NAME)
+    if channel:
+        await update_info(channel)
+
+@bot.event
+async def on_member_remove(member):
+    """멤버 퇴장"""
+    channel = discord.utils.get(member.guild.channels, name=CHANNEL_NAME)
+    if channel:
+        await update_info(channel)
+
+@tree.command(name="정보채널", description="서버 정보 채널을 생성/업데이트합니다")
+async def info_channel(interaction: discord.Interaction):
+    await interaction.response.send_message("🔄 처리 중...", ephemeral=True)
+    
+    channel = await create_info_channel(interaction.guild)
+    await update_info(channel)
+    
+    await interaction.edit_original_response(
+        content=f"✅ 정보 채널이 준비되었습니다!\n{channel.mention}"
+    )
 
 # 실행
 if __name__ == "__main__":
