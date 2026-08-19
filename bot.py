@@ -83,4 +83,5 @@ async def on_guild_emojis_update(guild, before, after):
     get_server_emojis(guild)
 
 # 실행 - 여기에 토큰 넣으세요
+import os
 bot.run(os.getenv("DISCORD_TOKEN"))
