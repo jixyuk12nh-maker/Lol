@@ -2,7 +2,6 @@ import os
 import discord
 from discord import app_commands
 import re
-import asyncio
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,11 +10,11 @@ intents.guilds = True
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-# 서버별 이모지 캐시
+# 서버 이모지 캐시
 emoji_cache = {}
 
-def get_server_emojis(guild):
-    """서버의 모든 커스텀 이모지를 가져옴"""
+def get_emojis(guild):
+    """서버 이모지 가져오기"""
     if not guild:
         return {}
     
@@ -32,137 +31,70 @@ def get_server_emojis(guild):
     emoji_cache[guild.id] = emojis
     return emojis
 
-def replace_emoji(text, guild):
-    """:이름: 형식만 서버 이모지로 변환"""
+def convert_emoji(text, guild):
+    """:이름: -> 실제 이모지로 변환"""
     if not text or not guild:
         return text
     
-    emojis = get_server_emojis(guild)
+    emojis = get_emojis(guild)
     
-    def replace_match(match):
+    def replace(match):
         name = match.group(1)
         return emojis.get(name, match.group(0))
     
-    return re.sub(r':([a-zA-Z0-9_]+):', replace_match, text)
+    return re.sub(r':([a-zA-Z0-9_]+):', replace, text)
 
-@tree.command(
-    name="임베드",
-    description="서버 커스텀 이모지를 지원하는 Embed 생성"
-)
+@tree.command(name="임베드", description="이모지가 포함된 Embed 생성")
 @app_commands.describe(
-    제목="Embed 제목",
-    설명="Embed 설명",
-    푸터="Embed 푸터 텍스트",
-    색상="색상 코드 (예: #FF0000, #00FF00)",
-    이미지="이미지 URL",
-    썸네일="썸네일 URL"
+    내용="Embed에 표시할 내용 (이모지: :이름: 형식)"
 )
-async def embed_command(
+async def embed_cmd(
     interaction: discord.Interaction,
-    제목: str = None,
-    설명: str = None,
-    푸터: str = None,
-    색상: str = None,
-    이미지: str = None,
-    썸네일: str = None
+    내용: str
 ):
+    # 바로 응답
+    await interaction.response.send_message("⏳ 생성 중...", ephemeral=True)
+    
     try:
-        # 먼저 응답을 보냄 (지연 방지)
-        await interaction.response.defer()
-        
-        if not interaction.guild:
-            await interaction.followup.send(
-                "이 명령어는 서버에서만 사용 가능합니다.",
-                ephemeral=True
-            )
-            return
+        # 이모지 변환
+        converted_text = convert_emoji(내용, interaction.guild)
         
         # Embed 생성
-        embed = discord.Embed()
+        embed = discord.Embed(
+            description=converted_text,
+            color=0x5865F2  # Discord 블루
+        )
         
-        # 색상 설정
-        if 색상:
-            try:
-                color_hex = 색상.lstrip('#')
-                embed.color = int(color_hex, 16)
-            except ValueError:
-                embed.color = 0x00ff00
-        else:
-            embed.color = 0x00ff00
-        
-        # 제목 설정 (이모지 변환)
-        if 제목:
-            embed.title = replace_emoji(제목, interaction.guild)
-        
-        # 설명 설정 (이모지 변환)
-        if 설명:
-            embed.description = replace_emoji(설명, interaction.guild)
-        
-        # 푸터 설정 (이모지 변환)
-        if 푸터:
-            embed.set_footer(text=replace_emoji(푸터, interaction.guild))
-        
-        # 이미지 설정
-        if 이미지:
-            embed.set_image(url=이미지)
-        
-        # 썸네일 설정
-        if 썸네일:
-            embed.set_thumbnail(url=썸네일)
-        
-        # 최소 하나의 필드 확인
-        if not (제목 or 설명 or 푸터):
-            embed.description = "서버 커스텀 이모지를 사용해보세요! 😊\n\n예시: :Potassium:"
-        
-        # 임베드 전송
-        await interaction.followup.send(embed=embed)
+        # 원본 메시지 수정
+        await interaction.edit_original_response(content=None, embed=embed)
         
     except Exception as e:
-        try:
-            await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
-        except:
-            pass
+        await interaction.edit_original_response(content=f"❌ 오류: {str(e)}")
 
 @bot.event
 async def on_ready():
-    print(f"✅ {bot.user} 실행됨!")
+    print(f"✅ {bot.user} 로그인됨")
+    await tree.sync()
     
-    try:
-        await tree.sync()
-        print("✅ 슬래시 명령어 동기화 완료!")
-    except Exception as e:
-        print(f"❌ 명령어 동기화 실패: {e}")
-    
-    # 모든 서버 이모지 캐시
+    # 캐시 초기화
     for guild in bot.guilds:
-        get_server_emojis(guild)
+        get_emojis(guild)
     
-    print(f"📊 서버 {len(bot.guilds)}개 연결됨")
-    print(f"🎨 총 이모지 수: {sum(len(guild.emojis) for guild in bot.guilds)}개")
-    print("🟢 봇이 완전히 준비되었습니다!")
+    print(f"📊 서버 {len(bot.guilds)}개")
+    print(f"🎨 총 이모지: {sum(len(guild.emojis) for guild in bot.guilds)}개")
 
 @bot.event
 async def on_guild_emojis_update(guild, before, after):
     """이모지 변경시 캐시 갱신"""
     if guild.id in emoji_cache:
         del emoji_cache[guild.id]
-    get_server_emojis(guild)
-    print(f"🔄 {guild.name} 서버 이모지 업데이트됨")
-
-@bot.event
-async def on_error(event, *args, **kwargs):
-    print(f"❌ 에러 발생: {event}")
+    get_emojis(guild)
 
 # 실행
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
     if not token:
-        print("❌ DISCORD_TOKEN 환경변수가 설정되지 않았습니다!")
+        print("❌ DISCORD_TOKEN 환경변수가 없습니다!")
         exit(1)
     
-    try:
-        bot.run(token)
-    except discord.errors.LoginFailure:
-        print("❌ 잘못된 토큰입니다. 환경변수를 확인해주세요.")
-    except Exception as e:
-        print(f"❌ 오류 발생: {e}")
+    bot.run(token)
