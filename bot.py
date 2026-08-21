@@ -121,7 +121,7 @@ async def create_or_update_channel(guild, channel_type, name):
 
 
 # ============================================================
-# 청소 명령어
+# 청소 명령어 (추가됨)
 # ============================================================
 
 @tree.command(
@@ -129,34 +129,32 @@ async def create_or_update_channel(guild, channel_type, name):
     description="지정된 개수만큼 메시지를 삭제합니다"
 )
 @app_commands.describe(
-    개수="삭제할 메시지 개수 (1~100)",
-    채널="메시지를 삭제할 채널 (선택)"
+    갯수="삭제할 메시지 개수 (1~100)"
 )
 @app_commands.checks.has_permissions(manage_messages=True)
 async def clear_command(
     interaction: discord.Interaction,
-    개수: int,
-    채널: discord.TextChannel = None
+    갯수: int
 ):
-    """지정된 채널에서 메시지를 삭제합니다"""
+    """현재 채널에서 메시지를 삭제합니다"""
 
-    # 개수 제한 확인
-    if 개수 < 1:
+    # 갯수 제한 확인
+    if 갯수 < 1:
         await interaction.response.send_message(
             "❌ 1개 이상의 메시지를 삭제해야 합니다.",
             ephemeral=True
         )
         return
 
-    if 개수 > 100:
+    if 갯수 > 100:
         await interaction.response.send_message(
             "❌ 한 번에 최대 100개까지만 삭제할 수 있습니다.",
             ephemeral=True
         )
         return
 
-    # 삭제할 채널 설정
-    target_channel = 채널 or interaction.channel
+    # 현재 채널
+    target_channel = interaction.channel
 
     # 봇 권한 확인
     permissions = target_channel.permissions_for(interaction.guild.me)
@@ -176,14 +174,14 @@ async def clear_command(
         return
 
     await interaction.response.send_message(
-        f"🔄 {개수}개의 메시지를 삭제하는 중...",
+        f"🔄 {갯수}개의 메시지를 삭제하는 중...",
         ephemeral=True
     )
 
     try:
         # 메시지 삭제
         deleted = await target_channel.purge(
-            limit=개수,
+            limit=갯수,
             check=None,
             bulk=True
         )
@@ -209,7 +207,7 @@ async def clear_command(
 
 
 # ============================================================
-# 청소 명령어 에러 처리
+# 청소 명령어 에러 처리 (추가됨)
 # ============================================================
 
 @clear_command.error
@@ -404,4 +402,206 @@ async def info_channel(interaction: discord.Interaction):
     except Exception as e:
 
         print(
-            f"
+            f"❌ 정보 채널 업데이트 오류: {e}"
+        )
+
+        await interaction.edit_original_response(
+            content="❌ 정보 채널 업데이트 중 오류가 발생했습니다."
+        )
+
+
+# ============================================================
+# 핑
+# ============================================================
+
+@tree.command(
+    name="핑",
+    description="봇의 응답 속도를 확인합니다"
+)
+async def ping(interaction: discord.Interaction):
+
+    latency = round(
+        bot.latency * 1000
+    )
+
+    await interaction.response.send_message(
+        f"🏓 퐁! 응답 속도: {latency}ms",
+        ephemeral=True
+    )
+
+
+# ============================================================
+# 봇 준비
+# ============================================================
+
+@bot.event
+async def on_ready():
+
+    print(
+        f"✅ {bot.user} 실행됨"
+    )
+
+    try:
+
+        await tree.sync()
+
+        print(
+            "✅ 명령어 동기화 완료"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 명령어 동기화 실패: {e}"
+        )
+
+    # 모든 서버 정보 채널 업데이트
+    for guild in bot.guilds:
+
+        try:
+
+            await update_info_channels(
+                guild
+            )
+
+            print(
+                f"✅ {guild.name} "
+                f"정보 채널 준비 완료"
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ {guild.name} "
+                f"정보 채널 오류: {e}"
+            )
+
+    print(
+        f"📊 총 {len(bot.guilds)}개 서버 연결됨"
+    )
+
+
+# ============================================================
+# 멤버 입장
+# ============================================================
+
+@bot.event
+async def on_member_join(member):
+
+    try:
+
+        await update_info_channels(
+            member.guild
+        )
+
+        print(
+            f"👤 {member} 입장 - "
+            f"{member.guild.name} 정보 업데이트"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 멤버 입장 처리 오류: {e}"
+        )
+
+
+# ============================================================
+# 멤버 퇴장
+# ============================================================
+
+@bot.event
+async def on_member_remove(member):
+
+    try:
+
+        await update_info_channels(
+            member.guild
+        )
+
+        print(
+            f"👋 {member} 퇴장 - "
+            f"{member.guild.name} 정보 업데이트"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 멤버 퇴장 처리 오류: {e}"
+        )
+
+
+# ============================================================
+# 서버 입장
+# ============================================================
+
+@bot.event
+async def on_guild_join(guild):
+
+    try:
+
+        await update_info_channels(
+            guild
+        )
+
+        print(
+            f"✅ {guild.name} 서버에 입장했습니다."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 서버 입장 처리 오류: {e}"
+        )
+
+
+# ============================================================
+# 에러 처리
+# ============================================================
+
+@bot.event
+async def on_error(
+    event,
+    *args,
+    **kwargs
+):
+
+    print(
+        f"❌ 이벤트 오류: {event}"
+    )
+
+
+# ============================================================
+# 실행
+# ============================================================
+
+if __name__ == "__main__":
+
+    token = os.getenv(
+        "DISCORD_TOKEN"
+    )
+
+    if not token:
+
+        print(
+            "❌ DISCORD_TOKEN 환경변수가 없습니다!"
+        )
+
+        exit(1)
+
+    try:
+
+        bot.run(token)
+
+    except discord.errors.LoginFailure:
+
+        print(
+            "❌ 잘못된 토큰입니다. "
+            "DISCORD_TOKEN을 확인해주세요."
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 오류 발생: {e}"
+        )
