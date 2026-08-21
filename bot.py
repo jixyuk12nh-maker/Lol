@@ -245,7 +245,7 @@ class JoinLogView(View):
         )
         self.add_item(welcome_select)
         
-        # 정보 보기 버튼 (새로운 버튼)
+        # 정보 보기 버튼
         self.add_item(
             Button(
                 label="상세 정보",
@@ -255,7 +255,76 @@ class JoinLogView(View):
             )
         )
 
-# Components V2 - 이벤트 핸들러
+# Modal 클래스 (discord.py 2.6.0)
+class WelcomeModal(Modal):
+    """맞춤 환영 메시지 작성을 위한 Modal"""
+    def __init__(self, member: discord.Member):
+        super().__init__(title="✏️ 맞춤 환영 메시지 작성")
+        self.member = member
+        
+        self.message_input = TextInput(
+            label="환영 메시지",
+            placeholder=f"{member.mention}님을 환영하는 메시지를 작성해주세요...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=1000
+        )
+        self.add_item(self.message_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="👋 맞춤 환영 메시지",
+            description=self.message_input.value,
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text=f"{self.member.name}님 입장을 맞춤으로 환영합니다!")
+        
+        await interaction.response.send_message(embed=embed)
+
+# 봇 인스턴스 생성
+bot = InfoBot()
+
+# ============================================================
+# 이벤트 핸들러 (bot 인스턴스 생성 후 정의)
+# ============================================================
+
+@bot.event
+async def on_ready():
+    logger.info(f"✅ {bot.user} 실행됨 (discord.py {discord.__version__})")
+    logger.info(f"📊 총 {len(bot.guilds)}개 서버 연결됨")
+    
+    for guild in bot.guilds:
+        try:
+            await bot.update_info_channels(guild)
+            logger.info(f"✅ {guild.name} 정보 채널 준비 완료")
+        except Exception as e:
+            logger.error(f"❌ {guild.name} 정보 채널 오류: {e}")
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    try:
+        await bot.update_info_channels(member.guild)
+        await bot.send_join_log(member)
+        logger.info(f"👤 {member} 입장 - {member.guild.name} 정보 업데이트 완료")
+    except Exception as e:
+        logger.error(f"❌ 멤버 입장 처리 오류: {e}")
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    try:
+        await bot.update_info_channels(member.guild)
+        logger.info(f"👋 {member} 퇴장 - {member.guild.name} 정보 업데이트")
+    except Exception as e:
+        logger.error(f"❌ 멤버 퇴장 처리 오류: {e}")
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    try:
+        await bot.update_info_channels(guild)
+        logger.info(f"✅ {guild.name} 서버에 입장했습니다.")
+    except Exception as e:
+        logger.error(f"❌ 서버 입장 처리 오류: {e}")
+
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     """인터랙션 이벤트 처리 (discord.py 2.6.0)"""
@@ -383,33 +452,10 @@ async def on_interaction(interaction: discord.Interaction):
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Modal 클래스 (discord.py 2.6.0)
-class WelcomeModal(Modal):
-    """맞춤 환영 메시지 작성을 위한 Modal"""
-    def __init__(self, member: discord.Member):
-        super().__init__(title="✏️ 맞춤 환영 메시지 작성")
-        self.member = member
-        
-        self.message_input = TextInput(
-            label="환영 메시지",
-            placeholder=f"{member.mention}님을 환영하는 메시지를 작성해주세요...",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            max_length=1000
-        )
-        self.add_item(self.message_input)
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="👋 맞춤 환영 메시지",
-            description=self.message_input.value,
-            color=discord.Color.gold()
-        )
-        embed.set_footer(text=f"{self.member.name}님 입장을 맞춤으로 환영합니다!")
-        
-        await interaction.response.send_message(embed=embed)
-
+# ============================================================
 # 명령어 정의
+# ============================================================
+
 @bot.tree.command(name="임베드", description="임베드 메시지를 생성합니다")
 @app_commands.describe(내용="표시할 내용", 제목="제목 (선택)")
 async def embed_command(interaction: discord.Interaction, 내용: str, 제목: Optional[str] = None):
@@ -496,53 +542,10 @@ async def set_log_channel(interaction: discord.Interaction, 채널: discord.Text
         logger.error(f"❌ 로그 채널 설정 오류: {e}")
         await interaction.response.send_message("❌ 로그 채널 설정 중 오류가 발생했습니다.", ephemeral=True)
 
-# 이벤트 핸들러
-@bot.event
-async def on_ready():
-    logger.info(f"✅ {bot.user} 실행됨 (discord.py {discord.__version__})")
-    logger.info(f"📊 총 {len(bot.guilds)}개 서버 연결됨")
-    
-    for guild in bot.guilds:
-        try:
-            await bot.update_info_channels(guild)
-            logger.info(f"✅ {guild.name} 정보 채널 준비 완료")
-        except Exception as e:
-            logger.error(f"❌ {guild.name} 정보 채널 오류: {e}")
-
-@bot.event
-async def on_member_join(member: discord.Member):
-    try:
-        await bot.update_info_channels(member.guild)
-        await bot.send_join_log(member)
-        logger.info(f"👤 {member} 입장 - {member.guild.name} 정보 업데이트 완료")
-    except Exception as e:
-        logger.error(f"❌ 멤버 입장 처리 오류: {e}")
-
-@bot.event
-async def on_member_remove(member: discord.Member):
-    try:
-        await bot.update_info_channels(member.guild)
-        logger.info(f"👋 {member} 퇴장 - {member.guild.name} 정보 업데이트")
-    except Exception as e:
-        logger.error(f"❌ 멤버 퇴장 처리 오류: {e}")
-
-@bot.event
-async def on_guild_join(guild: discord.Guild):
-    try:
-        await bot.update_info_channels(guild)
-        logger.info(f"✅ {guild.name} 서버에 입장했습니다.")
-    except Exception as e:
-        logger.error(f"❌ 서버 입장 처리 오류: {e}")
-
-@bot.event
-async def on_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message("❌ 이 명령어를 사용할 권한이 없습니다.", ephemeral=True)
-    else:
-        logger.error(f"❌ 명령어 에러: {error}")
-        await interaction.response.send_message("❌ 명령어 실행 중 오류가 발생했습니다.", ephemeral=True)
-
+# ============================================================
 # 실행
+# ============================================================
+
 if __name__ == "__main__":
     token = os.getenv("DISCORD_TOKEN")
     
