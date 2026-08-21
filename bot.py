@@ -2,6 +2,10 @@ import os
 import discord
 from discord import app_commands
 
+# ============================================================
+# 기본 설정
+# ============================================================
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -16,120 +20,170 @@ tree = app_commands.CommandTree(bot)
 # ============================================================
 
 async def update_info_channels(guild):
-    """채널 이름으로 서버 정보 표시"""
+    """서버의 Members / Humans / Bots 채널을 생성 및 업데이트"""
+
+    if guild is None:
+        return
 
     total = guild.member_count or 0
-    bots = sum(1 for m in guild.members if m.bot)
+
+    # 캐시된 멤버 기준
+    bots = sum(1 for member in guild.members if member.bot)
     humans = total - bots
 
-    humans_name = f"・Humans: {humans}"
-    bots_name = f"・Bots: {bots}"
-    members_name = f"・Members: {total}"
+    channels = {
+        "Members": f"・Members: {total}",
+        "Humans": f"・Humans: {humans}",
+        "Bots": f"・Bots: {bots}"
+    }
 
-    await create_or_update_channel(guild, humans_name)
-    await create_or_update_channel(guild, bots_name)
-    await create_or_update_channel(guild, members_name)
+    for channel_type, channel_name in channels.items():
+        await create_or_update_channel(
+            guild,
+            channel_type,
+            channel_name
+        )
 
 
-async def create_or_update_channel(guild, name):
-    """채널 생성 또는 이름 업데이트"""
+async def create_or_update_channel(guild, channel_type, name):
+    """정보용 음성 채널 생성 또는 이름 업데이트"""
 
-    if len(name) > 100:
-        name = name[:97] + "..."
-
-    # 이름이 정확히 같은 채널이 있는지 확인
+    # 기존 해당 채널 찾기
     for channel in guild.channels:
-        if (
-            channel.name == name
-            and isinstance(channel, discord.VoiceChannel)
-        ):
+
+        if not isinstance(channel, discord.VoiceChannel):
+            continue
+
+        # 기존 이름에서 종류 확인
+        if channel_type.lower() in channel.name.lower():
+
+            if channel.name != name:
+                try:
+                    await channel.edit(
+                        name=name,
+                        reason="서버 정보 채널 업데이트"
+                    )
+                except discord.Forbidden:
+                    print(
+                        f"❌ {guild.name}: "
+                        f"{channel_type} 채널 이름 변경 권한 없음"
+                    )
+                except discord.HTTPException as e:
+                    print(
+                        f"❌ {guild.name}: "
+                        f"{channel_type} 채널 업데이트 실패: {e}"
+                    )
+
             return channel
 
-    # 기존 Humans/Bots/Members 채널 찾기
-    for channel in guild.channels:
-        if isinstance(channel, discord.VoiceChannel):
-
-            if "Humans" in channel.name and "Humans" in name:
-                await channel.edit(name=name)
-                return channel
-
-            if "Bots" in channel.name and "Bots" in name:
-                await channel.edit(name=name)
-                return channel
-
-            if "Members" in channel.name and "Members" in name:
-                await channel.edit(name=name)
-                return channel
-
-    # 새 음성 채널 생성
+    # 권한 설정
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(
             view_channel=True,
             connect=False
-        ),
-        guild.me: discord.PermissionOverwrite(
-            view_channel=True,
-            connect=True
         )
     }
 
-    channel = await guild.create_voice_channel(
-        name,
-        overwrites=overwrites,
-        reason="서버 정보 채널 생성"
-    )
+    # 봇 권한
+    if guild.me:
+        overwrites[guild.me] = discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True
+        )
 
-    return channel
+    try:
+        channel = await guild.create_voice_channel(
+            name=name,
+            overwrites=overwrites,
+            reason="서버 정보 채널 생성"
+        )
+
+        print(
+            f"✅ {guild.name}: "
+            f"{name} 생성 완료"
+        )
+
+        return channel
+
+    except discord.Forbidden:
+        print(
+            f"❌ {guild.name}: "
+            f"{name} 생성 권한 없음"
+        )
+
+    except discord.HTTPException as e:
+        print(
+            f"❌ {guild.name}: "
+            f"{name} 생성 실패: {e}"
+        )
+
+    return None
 
 
 # ============================================================
-# Components V2 텍스트 UI
+# 임베드 / 텍스트 카드
 # ============================================================
 
 @tree.command(
-    name="ui",
-    description="Components V2 텍스트 카드를 생성합니다"
+    name="임베드",
+    description="임베드 메시지를 생성합니다"
 )
 @app_commands.describe(
-    내용="카드에 표시할 내용",
-    제목="카드 제목 (선택)"
+    내용="표시할 내용",
+    제목="제목 (선택)"
 )
-async def ui_command(
+async def embed_command(
     interaction: discord.Interaction,
     내용: str,
     제목: str = None
 ):
-    """Components V2 텍스트 카드"""
+    """텍스트 카드 메시지 생성"""
 
     if 제목:
         text = f"# {제목}\n\n{내용}"
     else:
         text = 내용
 
-    container = discord.ui.Container(
-        discord.ui.TextDisplay(text)
-    )
+    try:
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(text)
+        )
 
-    view = discord.ui.LayoutView()
-    view.add_item(container)
+        view = discord.ui.LayoutView()
+        view.add_item(container)
 
-    await interaction.channel.send(
-        view=view
-    )
+        await interaction.channel.send(
+            view=view
+        )
 
-    await interaction.response.send_message(
-        "✅ UI가 전송되었습니다!",
-        ephemeral=True
-    )
+        await interaction.response.send_message(
+            "✅ 메시지가 생성되었습니다!",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ 메시지를 전송할 권한이 없습니다.",
+            ephemeral=True
+        )
+
+    except Exception as e:
+        print(f"❌ 임베드 생성 오류: {e}")
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ 메시지를 생성하는 중 오류가 발생했습니다.",
+                ephemeral=True
+            )
 
 
 # ============================================================
-# 서버 정보 Components V2
+# 서버 정보
 # ============================================================
 
 @tree.command(
     name="서버정보",
-    description="서버 정보를 Components V2 카드로 표시합니다"
+    description="서버의 기본 정보를 표시합니다"
 )
 async def server_info(interaction: discord.Interaction):
 
@@ -143,7 +197,10 @@ async def server_info(interaction: discord.Interaction):
         return
 
     total = guild.member_count or 0
-    bots = sum(1 for m in guild.members if m.bot)
+    bots = sum(
+        1 for member in guild.members
+        if member.bot
+    )
     humans = total - bots
 
     owner = guild.owner
@@ -158,7 +215,7 @@ async def server_info(interaction: discord.Interaction):
     )
 
     text = (
-        f"# 📊 {guild.name} 서버 정보\n\n"
+        f"# 📊 {guild.name}\n\n"
         f"👤 **Humans:** {humans}\n"
         f"🤖 **Bots:** {bots}\n"
         f"👥 **Members:** {total}\n\n"
@@ -168,16 +225,26 @@ async def server_info(interaction: discord.Interaction):
         f"🎨 **역할 수:** {len(guild.roles)}"
     )
 
-    container = discord.ui.Container(
-        discord.ui.TextDisplay(text)
-    )
+    try:
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(text)
+        )
 
-    view = discord.ui.LayoutView()
-    view.add_item(container)
+        view = discord.ui.LayoutView()
+        view.add_item(container)
 
-    await interaction.response.send_message(
-        view=view
-    )
+        await interaction.response.send_message(
+            view=view
+        )
+
+    except Exception as e:
+        print(f"❌ 서버 정보 오류: {e}")
+
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "❌ 서버 정보를 표시하는 중 오류가 발생했습니다.",
+                ephemeral=True
+            )
 
 
 # ============================================================
@@ -186,24 +253,37 @@ async def server_info(interaction: discord.Interaction):
 
 @tree.command(
     name="정보채널",
-    description="서버 정보 채널을 생성/업데이트합니다"
+    description="서버 정보 채널을 생성하거나 업데이트합니다"
 )
 async def info_channel(interaction: discord.Interaction):
 
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "❌ 서버에서만 사용할 수 있습니다.",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.send_message(
-        "🔄 처리 중...",
+        "🔄 서버 정보 채널을 업데이트하는 중...",
         ephemeral=True
     )
 
     try:
-        await update_info_channels(interaction.guild)
+
+        await update_info_channels(
+            interaction.guild
+        )
 
         await interaction.edit_original_response(
-            content="✅ 정보 채널이 업데이트되었습니다!"
+            content="✅ 서버 정보 채널이 업데이트되었습니다!"
         )
 
     except Exception as e:
-        print(f"정보 채널 오류: {e}")
+
+        print(
+            f"❌ 정보 채널 업데이트 오류: {e}"
+        )
 
         await interaction.edit_original_response(
             content="❌ 정보 채널 업데이트 중 오류가 발생했습니다."
@@ -220,7 +300,9 @@ async def info_channel(interaction: discord.Interaction):
 )
 async def ping(interaction: discord.Interaction):
 
-    latency = round(bot.latency * 1000)
+    latency = round(
+        bot.latency * 1000
+    )
 
     await interaction.response.send_message(
         f"🏓 퐁! 응답 속도: {latency}ms",
@@ -235,25 +317,43 @@ async def ping(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
 
-    print(f"✅ {bot.user} 실행됨")
+    print(
+        f"✅ {bot.user} 실행됨"
+    )
 
     try:
-        await tree.sync()
-        print("✅ 명령어 동기화 완료")
-    except Exception as e:
-        print(f"❌ 명령어 동기화 실패: {e}")
 
+        await tree.sync()
+
+        print(
+            "✅ 명령어 동기화 완료"
+        )
+
+    except Exception as e:
+
+        print(
+            f"❌ 명령어 동기화 실패: {e}"
+        )
+
+    # 모든 서버 정보 채널 업데이트
     for guild in bot.guilds:
 
         try:
-            await update_info_channels(guild)
+
+            await update_info_channels(
+                guild
+            )
+
             print(
-                f"✅ {guild.name} 서버 정보 채널 준비 완료"
+                f"✅ {guild.name} "
+                f"정보 채널 준비 완료"
             )
 
         except Exception as e:
+
             print(
-                f"❌ {guild.name} 정보 채널 오류: {e}"
+                f"❌ {guild.name} "
+                f"정보 채널 오류: {e}"
             )
 
     print(
@@ -269,9 +369,21 @@ async def on_ready():
 async def on_member_join(member):
 
     try:
-        await update_info_channels(member.guild)
+
+        await update_info_channels(
+            member.guild
+        )
+
+        print(
+            f"👤 {member} 입장 - "
+            f"{member.guild.name} 정보 업데이트"
+        )
+
     except Exception as e:
-        print(f"❌ 멤버 입장 처리 오류: {e}")
+
+        print(
+            f"❌ 멤버 입장 처리 오류: {e}"
+        )
 
 
 # ============================================================
@@ -282,9 +394,21 @@ async def on_member_join(member):
 async def on_member_remove(member):
 
     try:
-        await update_info_channels(member.guild)
+
+        await update_info_channels(
+            member.guild
+        )
+
+        print(
+            f"👋 {member} 퇴장 - "
+            f"{member.guild.name} 정보 업데이트"
+        )
+
     except Exception as e:
-        print(f"❌ 멤버 퇴장 처리 오류: {e}")
+
+        print(
+            f"❌ 멤버 퇴장 처리 오류: {e}"
+        )
 
 
 # ============================================================
@@ -295,15 +419,20 @@ async def on_member_remove(member):
 async def on_guild_join(guild):
 
     try:
-        await update_info_channels(guild)
+
+        await update_info_channels(
+            guild
+        )
 
         print(
-            f"✅ {guild.name} 서버에 입장했고 "
-            f"정보 채널을 생성했습니다!"
+            f"✅ {guild.name} 서버에 입장했습니다."
         )
 
     except Exception as e:
-        print(f"❌ 서버 입장 처리 오류: {e}")
+
+        print(
+            f"❌ 서버 입장 처리 오류: {e}"
+        )
 
 
 # ============================================================
@@ -311,9 +440,15 @@ async def on_guild_join(guild):
 # ============================================================
 
 @bot.event
-async def on_error(event, *args, **kwargs):
+async def on_error(
+    event,
+    *args,
+    **kwargs
+):
 
-    print(f"❌ 에러 발생: {event}")
+    print(
+        f"❌ 이벤트 오류: {event}"
+    )
 
 
 # ============================================================
@@ -322,10 +457,16 @@ async def on_error(event, *args, **kwargs):
 
 if __name__ == "__main__":
 
-    token = os.getenv("DISCORD_TOKEN")
+    token = os.getenv(
+        "DISCORD_TOKEN"
+    )
 
     if not token:
-        print("❌ DISCORD_TOKEN 환경변수가 없습니다!")
+
+        print(
+            "❌ DISCORD_TOKEN 환경변수가 없습니다!"
+        )
+
         exit(1)
 
     try:
@@ -336,9 +477,11 @@ if __name__ == "__main__":
 
         print(
             "❌ 잘못된 토큰입니다. "
-            "환경변수를 확인해주세요."
+            "DISCORD_TOKEN을 확인해주세요."
         )
 
     except Exception as e:
 
-        print(f"❌ 오류 발생: {e}")
+        print(
+            f"❌ 오류 발생: {e}"
+        )
