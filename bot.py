@@ -1,7 +1,7 @@
 import os
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Select, TextInput, Modal, TextDisplay, Container, LayoutView
+from discord.ui import View, Button, Select, TextInput, Modal
 import logging
 from typing import Optional
 from datetime import datetime
@@ -12,6 +12,117 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# Components V2 - 텍스트 카드 UI
+# ============================================================
+
+class TextCardView(View):
+    """텍스트 카드 UI (Components V2)"""
+    def __init__(self, title: str, content: str, footer: Optional[str] = None):
+        super().__init__(timeout=None)
+        
+        # 카드 스타일의 텍스트 표시 (Components V2 방식)
+        text = f"# {title}\n\n{content}"
+        if footer:
+            text += f"\n\n---\n*{footer}*"
+        
+        # TextDisplay 컴포넌트 생성 (올바른 방식)
+        text_display = discord.ui.TextDisplay(
+            text=text,
+            style=discord.TextStyle.paragraph
+        )
+        
+        # Container에 TextDisplay 추가
+        container = discord.ui.Container(text_display)
+        
+        # LayoutView 생성 및 Container 추가
+        layout_view = discord.ui.LayoutView()
+        layout_view.add_item(container)
+        
+        # 메인 View에 LayoutView 추가
+        self.add_item(layout_view)
+
+# ============================================================
+# Components V2 - 입장 로그 버튼 뷰
+# ============================================================
+
+class JoinLogView(View):
+    """입장 로그용 버튼 뷰"""
+    def __init__(self, member: discord.Member):
+        super().__init__(timeout=None)
+        self.member = member
+        
+        # 프로필 보기 버튼
+        self.add_item(
+            Button(
+                label="프로필 보기",
+                style=discord.ButtonStyle.primary,
+                emoji="👤",
+                url=f"https://discord.com/users/{member.id}"
+            )
+        )
+        
+        # 역할 부여 버튼
+        self.add_item(
+            Button(
+                label="기본 역할 부여",
+                style=discord.ButtonStyle.success,
+                emoji="🎖️",
+                custom_id=f"give_role_{member.id}"
+            )
+        )
+        
+        # 환영 메시지 선택
+        welcome_select = Select(
+            placeholder="환영 메시지 선택",
+            options=[
+                discord.SelectOption(
+                    label="기본 환영",
+                    value="default",
+                    description="기본 환영 메시지",
+                    emoji="👋"
+                ),
+                discord.SelectOption(
+                    label="따뜻한 환영",
+                    value="warm",
+                    description="따뜻한 환영 메시지",
+                    emoji="❤️"
+                ),
+                discord.SelectOption(
+                    label="공식 환영",
+                    value="official",
+                    description="공식적인 환영 메시지",
+                    emoji="📜"
+                )
+            ],
+            custom_id=f"welcome_select_{member.id}"
+        )
+        self.add_item(welcome_select)
+
+# ============================================================
+# Modal 클래스
+# ============================================================
+
+class WelcomeModal(Modal):
+    """맞춤 환영 메시지 작성을 위한 Modal"""
+    def __init__(self, member: discord.Member):
+        super().__init__(title="✏️ 맞춤 환영 메시지 작성")
+        self.member = member
+        
+        self.message_input = TextInput(
+            label="환영 메시지",
+            placeholder=f"{member.mention}님을 환영하는 메시지를 작성해주세요...",
+            style=discord.TextStyle.paragraph,
+            required=True,
+            max_length=1000
+        )
+        self.add_item(self.message_input)
+    
+    async def on_submit(self, interaction: discord.Interaction):
+        content = self.message_input.value
+        view = TextCardView("👋 맞춤 환영 메시지", content, f"{self.member.name}님 입장을 환영합니다!")
+        await interaction.response.send_message(view=view)
 
 # ============================================================
 # 봇 클래스
@@ -142,107 +253,19 @@ class InfoBot(discord.Client):
             title = f"👋 새 멤버 입장! - {member.name}"
             footer = f"입장 시간: {datetime.now().strftime('%Y년 %m월 %d일 %H:%M:%S')}"
             
-            # 텍스트 카드 UI 생성
-            view = JoinLogView(member)
+            # 텍스트 카드 전송
+            text_card = TextCardView(title, content, footer)
+            await log_channel.send(view=text_card)
             
-            # 로그 메시지 전송 (임베드 대신 텍스트 카드 사용)
-            await log_channel.send(view=TextCardView(title, content, footer))
-            
-            # 추가 버튼이 있는 뷰 전송
-            await log_channel.send(view=view)
+            # 버튼 뷰 전송
+            button_view = JoinLogView(member)
+            await log_channel.send(view=button_view)
             
         except Exception as e:
             logger.error(f"❌ 입장 로그 전송 실패: {e}")
 
 # ============================================================
-# Components V2 - 텍스트 카드 UI
-# ============================================================
-
-class TextCardView(View):
-    """텍스트 카드 UI (Components V2)"""
-    def __init__(self, title: str, content: str, footer: Optional[str] = None):
-        super().__init__(timeout=None)
-        
-        # 카드 스타일의 텍스트 표시
-        text = f"# {title}\n\n{content}"
-        if footer:
-            text += f"\n\n---\n*{footer}*"
-        
-        # 텍스트 디스플레이 컴포넌트
-        text_display = TextDisplay(
-            label=text,
-            style=discord.TextStyle.paragraph
-        )
-        
-        # 컨테이너에 추가
-        container = Container(text_display)
-        
-        # 레이아웃 뷰에 추가
-        layout_view = LayoutView()
-        layout_view.add_item(container)
-        
-        # 메인 뷰에 추가
-        self.add_item(layout_view)
-
-# ============================================================
-# Components V2 - 입장 로그 버튼 뷰
-# ============================================================
-
-class JoinLogView(View):
-    """입장 로그용 버튼 뷰"""
-    def __init__(self, member: discord.Member):
-        super().__init__(timeout=None)
-        self.member = member
-        
-        # 프로필 보기 버튼
-        self.add_item(
-            Button(
-                label="프로필 보기",
-                style=discord.ButtonStyle.primary,
-                emoji="👤",
-                url=f"https://discord.com/users/{member.id}"
-            )
-        )
-        
-        # 역할 부여 버튼 (관리자만 사용 가능)
-        self.add_item(
-            Button(
-                label="기본 역할 부여",
-                style=discord.ButtonStyle.success,
-                emoji="🎖️",
-                custom_id=f"give_role_{member.id}"
-            )
-        )
-        
-        # 환영 메시지 선택
-        welcome_select = Select(
-            placeholder="환영 메시지 선택",
-            options=[
-                discord.SelectOption(
-                    label="기본 환영",
-                    value="default",
-                    description="기본 환영 메시지",
-                    emoji="👋"
-                ),
-                discord.SelectOption(
-                    label="따뜻한 환영",
-                    value="warm",
-                    description="따뜻한 환영 메시지",
-                    emoji="❤️"
-                ),
-                discord.SelectOption(
-                    label="공식 환영",
-                    value="official",
-                    description="공식적인 환영 메시지",
-                    emoji="📜"
-                )
-            ],
-            custom_id=f"welcome_select_{member.id}"
-        )
-        self.add_item(welcome_select)
-
-# ============================================================
-# 봇 인스턴스 생성
+# 봇 인스턴스 생성 (이벤트 등록보다 먼저)
 # ============================================================
 
 bot = InfoBot()
@@ -312,7 +335,6 @@ async def on_interaction(interaction: discord.Interaction):
             )
             return
         
-        # 권한 체크
         if not interaction.user.guild_permissions.manage_roles:
             await interaction.response.send_message(
                 "❌ 역할을 부여할 권한이 없습니다.",
@@ -334,9 +356,7 @@ async def on_interaction(interaction: discord.Interaction):
             try:
                 await member.add_roles(default_role, reason="입장 시 기본 역할 부여")
                 
-                content = (
-                    f"✅ {member.mention}님에게 **{default_role.name}** 역할을 부여했습니다!"
-                )
+                content = f"✅ {member.mention}님에게 **{default_role.name}** 역할을 부여했습니다!"
                 view = TextCardView("✅ 역할 부여 완료", content)
                 await interaction.response.send_message(view=view)
                 
@@ -364,6 +384,11 @@ async def on_interaction(interaction: discord.Interaction):
             return
         
         selected = interaction.data.get("values", [])[0] if interaction.data.get("values") else None
+        
+        if selected == "custom":
+            modal = WelcomeModal(member)
+            await interaction.response.send_modal(modal)
+            return
         
         welcome_messages = {
             "default": f"👋 {member.mention}님, 서버에 오신 것을 환영합니다! 즐거운 시간 보내세요!",
