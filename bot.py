@@ -1,7 +1,7 @@
 import os
 import discord
 from discord import app_commands
-from discord.ui import View, Button, Select, TextInput, Modal
+from discord.ui import View, Button, Select, TextInput, Modal, TextDisplay, Container, LayoutView
 import logging
 from typing import Optional
 from datetime import datetime
@@ -12,6 +12,10 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ============================================================
+# 봇 클래스
+# ============================================================
 
 class InfoBot(discord.Client):
     def __init__(self):
@@ -92,7 +96,7 @@ class InfoBot(discord.Client):
             logger.error(f"❌ 채널 생성 실패: {e}")
     
     async def send_join_log(self, member: discord.Member):
-        """입장 로그 전송 (discord.py 2.6.0 Components V2)"""
+        """입장 로그 전송 (Components V2 텍스트 카드)"""
         try:
             # 로그 채널 찾기
             log_channel = None
@@ -125,69 +129,67 @@ class InfoBot(discord.Client):
                 )
                 self.log_channel_id = log_channel.id
             
-            # Components V2 - View 생성
+            # 텍스트 카드 내용 구성
+            content = (
+                f"**📛 이름:** {member.name}\n"
+                f"**🆔 ID:** `{member.id}`\n"
+                f"**👤 멘션:** {member.mention}\n\n"
+                f"**📅 계정 생성일:** {member.created_at.strftime('%Y년 %m월 %d일 %H:%M')}\n"
+                f"**🤖 봇 여부:** {'✅ 봇' if member.bot else '❌ 일반 유저'}\n"
+                f"**👥 총 멤버 수:** {member.guild.member_count}명"
+            )
+            
+            title = f"👋 새 멤버 입장! - {member.name}"
+            footer = f"입장 시간: {datetime.now().strftime('%Y년 %m월 %d일 %H:%M:%S')}"
+            
+            # 텍스트 카드 UI 생성
             view = JoinLogView(member)
             
-            # 임베드 생성
-            embed = discord.Embed(
-                title="👋 새 멤버 입장!",
-                color=discord.Color.green(),
-                timestamp=datetime.now()
-            )
+            # 로그 메시지 전송 (임베드 대신 텍스트 카드 사용)
+            await log_channel.send(view=TextCardView(title, content, footer))
             
-            embed.set_author(
-                name=f"{member.name}#{member.discriminator}",
-                icon_url=member.display_avatar.url
-            )
-            
-            # 유저 정보 (이름, ID, 멘션)
-            embed.add_field(
-                name="📛 이름",
-                value=f"**{member.name}**",
-                inline=True
-            )
-            embed.add_field(
-                name="🆔 ID",
-                value=f"`{member.id}`",
-                inline=True
-            )
-            embed.add_field(
-                name="👤 멘션",
-                value=member.mention,
-                inline=True
-            )
-            
-            # 추가 정보
-            embed.add_field(
-                name="📅 계정 생성일",
-                value=member.created_at.strftime("%Y년 %m월 %d일 %H:%M"),
-                inline=True
-            )
-            embed.add_field(
-                name="🤖 봇 여부",
-                value="✅ 봇" if member.bot else "❌ 일반 유저",
-                inline=True
-            )
-            embed.add_field(
-                name="👥 총 멤버 수",
-                value=f"{member.guild.member_count}명",
-                inline=True
-            )
-            
-            embed.set_footer(
-                text=f"입장 시간",
-                icon_url=member.guild.icon.url if member.guild.icon else None
-            )
-            
-            # 로그 메시지 전송
-            await log_channel.send(embed=embed, view=view)
+            # 추가 버튼이 있는 뷰 전송
+            await log_channel.send(view=view)
             
         except Exception as e:
             logger.error(f"❌ 입장 로그 전송 실패: {e}")
 
-# Components V2 - View 클래스
+# ============================================================
+# Components V2 - 텍스트 카드 UI
+# ============================================================
+
+class TextCardView(View):
+    """텍스트 카드 UI (Components V2)"""
+    def __init__(self, title: str, content: str, footer: Optional[str] = None):
+        super().__init__(timeout=None)
+        
+        # 카드 스타일의 텍스트 표시
+        text = f"# {title}\n\n{content}"
+        if footer:
+            text += f"\n\n---\n*{footer}*"
+        
+        # 텍스트 디스플레이 컴포넌트
+        text_display = TextDisplay(
+            label=text,
+            style=discord.TextStyle.paragraph
+        )
+        
+        # 컨테이너에 추가
+        container = Container(text_display)
+        
+        # 레이아웃 뷰에 추가
+        layout_view = LayoutView()
+        layout_view.add_item(container)
+        
+        # 메인 뷰에 추가
+        self.add_item(layout_view)
+
+# ============================================================
+# Components V2 - 입장 로그 버튼 뷰
+# ============================================================
+
 class JoinLogView(View):
-    """입장 로그용 Components V2 View"""
+    """입장 로그용 버튼 뷰"""
     def __init__(self, member: discord.Member):
         super().__init__(timeout=None)
         self.member = member
@@ -202,7 +204,7 @@ class JoinLogView(View):
             )
         )
         
-        # 역할 부여 버튼
+        # 역할 부여 버튼 (관리자만 사용 가능)
         self.add_item(
             Button(
                 label="기본 역할 부여",
@@ -233,59 +235,20 @@ class JoinLogView(View):
                     value="official",
                     description="공식적인 환영 메시지",
                     emoji="📜"
-                ),
-                discord.SelectOption(
-                    label="맞춤 환영",
-                    value="custom",
-                    description="맞춤 환영 메시지 작성",
-                    emoji="✏️"
                 )
             ],
             custom_id=f"welcome_select_{member.id}"
         )
         self.add_item(welcome_select)
-        
-        # 정보 보기 버튼
-        self.add_item(
-            Button(
-                label="상세 정보",
-                style=discord.ButtonStyle.secondary,
-                emoji="📊",
-                custom_id=f"detail_info_{member.id}"
-            )
-        )
 
-# Modal 클래스 (discord.py 2.6.0)
-class WelcomeModal(Modal):
-    """맞춤 환영 메시지 작성을 위한 Modal"""
-    def __init__(self, member: discord.Member):
-        super().__init__(title="✏️ 맞춤 환영 메시지 작성")
-        self.member = member
-        
-        self.message_input = TextInput(
-            label="환영 메시지",
-            placeholder=f"{member.mention}님을 환영하는 메시지를 작성해주세요...",
-            style=discord.TextStyle.paragraph,
-            required=True,
-            max_length=1000
-        )
-        self.add_item(self.message_input)
-    
-    async def on_submit(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="👋 맞춤 환영 메시지",
-            description=self.message_input.value,
-            color=discord.Color.gold()
-        )
-        embed.set_footer(text=f"{self.member.name}님 입장을 맞춤으로 환영합니다!")
-        
-        await interaction.response.send_message(embed=embed)
-
+# ============================================================
 # 봇 인스턴스 생성
+# ============================================================
+
 bot = InfoBot()
 
 # ============================================================
-# 이벤트 핸들러 (bot 인스턴스 생성 후 정의)
+# 이벤트 핸들러
 # ============================================================
 
 @bot.event
@@ -303,8 +266,12 @@ async def on_ready():
 @bot.event
 async def on_member_join(member: discord.Member):
     try:
+        # 정보 채널 업데이트
         await bot.update_info_channels(member.guild)
+        
+        # 입장 로그 전송
         await bot.send_join_log(member)
+        
         logger.info(f"👤 {member} 입장 - {member.guild.name} 정보 업데이트 완료")
     except Exception as e:
         logger.error(f"❌ 멤버 입장 처리 오류: {e}")
@@ -327,7 +294,7 @@ async def on_guild_join(guild: discord.Guild):
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
-    """인터랙션 이벤트 처리 (discord.py 2.6.0)"""
+    """인터랙션 이벤트 처리"""
     if not interaction.type == discord.InteractionType.component:
         return
     
@@ -367,12 +334,11 @@ async def on_interaction(interaction: discord.Interaction):
             try:
                 await member.add_roles(default_role, reason="입장 시 기본 역할 부여")
                 
-                embed = discord.Embed(
-                    title="✅ 역할 부여 완료",
-                    description=f"{member.mention}님에게 **{default_role.name}** 역할을 부여했습니다!",
-                    color=discord.Color.green()
+                content = (
+                    f"✅ {member.mention}님에게 **{default_role.name}** 역할을 부여했습니다!"
                 )
-                await interaction.response.send_message(embed=embed)
+                view = TextCardView("✅ 역할 부여 완료", content)
+                await interaction.response.send_message(view=view)
                 
             except Exception as e:
                 await interaction.response.send_message(
@@ -399,74 +365,55 @@ async def on_interaction(interaction: discord.Interaction):
         
         selected = interaction.data.get("values", [])[0] if interaction.data.get("values") else None
         
-        if selected == "custom":
-            # Modal 사용 (discord.py 2.6.0 새로운 기능)
-            modal = WelcomeModal(member)
-            await interaction.response.send_modal(modal)
-            return
-        
         welcome_messages = {
             "default": f"👋 {member.mention}님, 서버에 오신 것을 환영합니다! 즐거운 시간 보내세요!",
             "warm": f"❤️ {member.mention}님, 따뜻하게 환영합니다! 함께 즐거운 시간을 만들어봐요~",
             "official": f"📜 {member.mention}님, 공식적으로 환영합니다! 서버 규칙을 확인하시고 즐거운 활동 되세요!"
         }
         
-        embed = discord.Embed(
-            title="👋 환영합니다!",
-            description=welcome_messages.get(selected, "👋 환영합니다!"),
-            color=discord.Color.blue()
+        content = welcome_messages.get(selected, "👋 환영합니다!")
+        view = TextCardView("👋 환영합니다!", content, f"{member.name}님 입장을 환영합니다!")
+        await interaction.response.send_message(view=view)
+
+@bot.event
+async def on_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message(
+            "❌ 이 명령어를 사용할 권한이 없습니다.",
+            ephemeral=True
         )
-        embed.set_footer(text=f"{member.name}님 입장을 환영합니다!")
-        
-        await interaction.response.send_message(embed=embed)
-    
-    # 상세 정보 처리
-    elif custom_id.startswith("detail_info_"):
-        member_id = int(custom_id.split("_")[2])
-        member = interaction.guild.get_member(member_id)
-        
-        if not member:
-            await interaction.response.send_message(
-                "❌ 멤버를 찾을 수 없습니다.",
-                ephemeral=True
-            )
-            return
-        
-        embed = discord.Embed(
-            title=f"📊 {member.name} 상세 정보",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
+    else:
+        logger.error(f"❌ 명령어 에러: {error}")
+        await interaction.response.send_message(
+            "❌ 명령어 실행 중 오류가 발생했습니다.",
+            ephemeral=True
         )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        
-        # 상세 정보 추가
-        embed.add_field(name="🆔 ID", value=f"`{member.id}`", inline=False)
-        embed.add_field(name="📛 이름", value=member.name, inline=True)
-        embed.add_field(name="🏷️ 디스크리미네이터", value=f"#{member.discriminator}", inline=True)
-        embed.add_field(name="👤 멘션", value=member.mention, inline=True)
-        embed.add_field(name="📅 가입일", value=member.joined_at.strftime("%Y년 %m월 %d일") if member.joined_at else "알 수 없음", inline=True)
-        embed.add_field(name="📅 계정 생성일", value=member.created_at.strftime("%Y년 %m월 %d일"), inline=True)
-        embed.add_field(name="🎨 역할", value=f"{len(member.roles)}개", inline=True)
-        embed.add_field(name="🤖 봇", value="✅" if member.bot else "❌", inline=True)
-        embed.add_field(name="🔊 음성 채널", value=member.voice.channel.name if member.voice and member.voice.channel else "없음", inline=True)
-        
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ============================================================
 # 명령어 정의
 # ============================================================
 
-@bot.tree.command(name="임베드", description="임베드 메시지를 생성합니다")
-@app_commands.describe(내용="표시할 내용", 제목="제목 (선택)")
-async def embed_command(interaction: discord.Interaction, 내용: str, 제목: Optional[str] = None):
+@bot.tree.command(
+    name="임베드",
+    description="텍스트 카드 형태의 메시지를 생성합니다"
+)
+@app_commands.describe(
+    내용="표시할 내용",
+    제목="카드 제목 (선택)"
+)
+async def embed_command(
+    interaction: discord.Interaction,
+    내용: str,
+    제목: Optional[str] = None
+):
+    """텍스트 카드 메시지 생성"""
     try:
-        embed = discord.Embed(
-            title=제목 or "📝 메시지",
-            description=내용,
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"요청자: {interaction.user.display_name}")
-        await interaction.response.send_message(embed=embed)
+        title = 제목 or "📝 메시지"
+        footer = f"요청자: {interaction.user.display_name}"
+        
+        view = TextCardView(title, 내용, footer)
+        await interaction.response.send_message(view=view)
+        
     except Exception as e:
         logger.error(f"❌ 임베드 생성 오류: {e}")
         await interaction.response.send_message(
@@ -474,73 +421,127 @@ async def embed_command(interaction: discord.Interaction, 내용: str, 제목: O
             ephemeral=True
         )
 
-@bot.tree.command(name="서버정보", description="서버의 기본 정보를 표시합니다")
+@bot.tree.command(
+    name="서버정보",
+    description="서버의 기본 정보를 텍스트 카드로 표시합니다"
+)
 async def server_info(interaction: discord.Interaction):
+    """서버 정보 표시"""
     if not interaction.guild:
-        await interaction.response.send_message("❌ 서버에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 서버에서만 사용할 수 있습니다.",
+            ephemeral=True
+        )
         return
     
     try:
-        await interaction.guild.chunk()
         guild = interaction.guild
+        await guild.chunk()
+        
         total = guild.member_count or 0
         bots = sum(1 for member in guild.members if member.bot)
         humans = total - bots
         
-        embed = discord.Embed(title=f"📊 {guild.name}", color=discord.Color.green())
-        embed.add_field(name="👤 Humans", value=humans, inline=True)
-        embed.add_field(name="🤖 Bots", value=bots, inline=True)
-        embed.add_field(name="👥 Total", value=total, inline=True)
-        embed.add_field(name="📅 생성일", value=guild.created_at.strftime("%Y년 %m월 %d일"), inline=True)
-        embed.add_field(name="👑 서버장", value=guild.owner.mention if guild.owner else "알 수 없음", inline=True)
-        embed.add_field(name="📌 채널 수", value=len(guild.channels), inline=True)
-        embed.set_footer(text=f"요청자: {interaction.user.display_name}")
+        content = (
+            f"**👤 Humans:** {humans}\n"
+            f"**🤖 Bots:** {bots}\n"
+            f"**👥 Members:** {total}\n\n"
+            f"**📅 생성일:** {guild.created_at.strftime('%Y년 %m월 %d일')}\n"
+            f"**👑 서버장:** {guild.owner.mention if guild.owner else '알 수 없음'}\n"
+            f"**📌 채널 수:** {len(guild.channels)}\n"
+            f"**🎨 역할 수:** {len(guild.roles)}"
+        )
         
-        await interaction.response.send_message(embed=embed)
+        title = f"📊 {guild.name}"
+        footer = f"요청자: {interaction.user.display_name}"
+        
+        view = TextCardView(title, content, footer)
+        await interaction.response.send_message(view=view)
+        
     except Exception as e:
         logger.error(f"❌ 서버 정보 오류: {e}")
-        await interaction.response.send_message("❌ 서버 정보를 표시하는 중 오류가 발생했습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 서버 정보를 표시하는 중 오류가 발생했습니다.",
+            ephemeral=True
+        )
 
-@bot.tree.command(name="정보채널", description="서버 정보 채널을 생성하거나 업데이트합니다")
+@bot.tree.command(
+    name="정보채널",
+    description="서버 정보 채널을 생성하거나 업데이트합니다"
+)
 async def info_channel(interaction: discord.Interaction):
+    """정보 채널 업데이트"""
     if not interaction.guild:
-        await interaction.response.send_message("❌ 서버에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 서버에서만 사용할 수 있습니다.",
+            ephemeral=True
+        )
         return
     
-    await interaction.response.send_message("🔄 서버 정보 채널을 업데이트하는 중...", ephemeral=True)
+    await interaction.response.send_message(
+        "🔄 서버 정보 채널을 업데이트하는 중...",
+        ephemeral=True
+    )
     
     try:
         await bot.update_info_channels(interaction.guild)
-        await interaction.edit_original_response(content="✅ 서버 정보 채널이 업데이트되었습니다!")
+        await interaction.edit_original_response(
+            content="✅ 서버 정보 채널이 업데이트되었습니다!"
+        )
     except Exception as e:
         logger.error(f"❌ 정보 채널 업데이트 오류: {e}")
-        await interaction.edit_original_response(content="❌ 정보 채널 업데이트 중 오류가 발생했습니다.")
+        await interaction.edit_original_response(
+            content="❌ 정보 채널 업데이트 중 오류가 발생했습니다."
+        )
 
-@bot.tree.command(name="핑", description="봇의 응답 속도를 확인합니다")
-async def ping(interaction: discord.Interaction):
-    latency = round(bot.latency * 1000)
-    await interaction.response.send_message(f"🏓 퐁! 응답 속도: {latency}ms", ephemeral=True)
-
-@bot.tree.command(name="로그채널", description="입장 로그 채널을 설정합니다")
-@app_commands.describe(채널="로그를 보낼 채널")
-async def set_log_channel(interaction: discord.Interaction, 채널: discord.TextChannel):
+@bot.tree.command(
+    name="로그채널",
+    description="입장 로그 채널을 설정합니다"
+)
+@app_commands.describe(
+    채널="로그를 보낼 채널"
+)
+async def set_log_channel(
+    interaction: discord.Interaction,
+    채널: discord.TextChannel
+):
+    """로그 채널 설정"""
     if not interaction.guild:
-        await interaction.response.send_message("❌ 서버에서만 사용할 수 있습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 서버에서만 사용할 수 있습니다.",
+            ephemeral=True
+        )
         return
     
     if not interaction.user.guild_permissions.manage_channels:
-        await interaction.response.send_message("❌ 채널 관리 권한이 필요합니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 채널 관리 권한이 필요합니다.",
+            ephemeral=True
+        )
         return
     
     try:
         bot.log_channel_id = 채널.id
-        await interaction.response.send_message(
-            f"✅ 입장 로그 채널이 {채널.mention}(으)로 설정되었습니다!",
-            ephemeral=True
-        )
+        content = f"✅ 입장 로그 채널이 {채널.mention}(으)로 설정되었습니다!"
+        view = TextCardView("📥 로그 채널 설정", content)
+        await interaction.response.send_message(view=view, ephemeral=True)
     except Exception as e:
         logger.error(f"❌ 로그 채널 설정 오류: {e}")
-        await interaction.response.send_message("❌ 로그 채널 설정 중 오류가 발생했습니다.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ 로그 채널 설정 중 오류가 발생했습니다.",
+            ephemeral=True
+        )
+
+@bot.tree.command(
+    name="핑",
+    description="봇의 응답 속도를 확인합니다"
+)
+async def ping(interaction: discord.Interaction):
+    """핑 확인"""
+    latency = round(bot.latency * 1000)
+    content = f"**응답 속도:** {latency}ms"
+    view = TextCardView("🏓 퐁!", content)
+    await interaction.response.send_message(view=view, ephemeral=True)
 
 # ============================================================
 # 실행
