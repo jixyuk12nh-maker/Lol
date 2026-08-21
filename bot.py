@@ -2,7 +2,9 @@ import os
 import json
 import re
 import discord
+
 from discord import app_commands
+from discord.ext import commands
 
 
 # ============================================================
@@ -24,49 +26,20 @@ DATA_FILE = "bot_data.json"
 # 데이터
 # ============================================================
 
-DEFAULT_TICKET_TYPES = [
-    {
-        "name": "구매 문의",
-        "emoji": "🛒",
-        "description": "구매 관련 문의"
-    },
-    {
-        "name": "결제 문의",
-        "emoji": "💳",
-        "description": "결제 관련 문의"
-    },
-    {
-        "name": "오류 문의",
-        "emoji": "🛠️",
-        "description": "오류 관련 문의"
-    },
-    {
-        "name": "기타 문의",
-        "emoji": "❓",
-        "description": "기타 문의"
-    }
-]
-
-
 def load_data():
 
     if not os.path.exists(DATA_FILE):
-        return {"guilds": {}}
+        return {
+            "guilds": {}
+        }
 
     try:
-
         with open(
             DATA_FILE,
             "r",
             encoding="utf-8"
         ) as f:
-
-            data = json.load(f)
-
-        if "guilds" not in data:
-            data["guilds"] = {}
-
-        return data
+            return json.load(f)
 
     except Exception as e:
 
@@ -74,7 +47,9 @@ def load_data():
             f"❌ 데이터 로드 실패: {e}"
         )
 
-        return {"guilds": {}}
+        return {
+            "guilds": {}
+        }
 
 
 data = load_data()
@@ -111,10 +86,10 @@ def get_guild_data(guild_id):
     if guild_id not in data["guilds"]:
 
         data["guilds"][guild_id] = {
-
             "join_log_channel": None,
 
             "ticket": {
+                "configured": False,
 
                 "panel_channel_id": None,
                 "panel_message_id": None,
@@ -127,26 +102,37 @@ def get_guild_data(guild_id):
                     "문의하실 항목을 선택해주세요.",
 
                 "close_label":
-                    "🔒 티켓 닫기",
+                    "티켓 닫기",
 
                 "delete_label":
-                    "🗑️ 티켓 삭제",
+                    "티켓 삭제",
 
-                # 닫으면 사용자에게만 숨김
-                # True = 보관
-                # False = 삭제
                 "archive_on_close": True,
 
-                "types":
-                    DEFAULT_TICKET_TYPES.copy()
+                # 처음에는 항목 없음
+                "types": []
             }
         }
 
         save_data()
 
-    ticket = data["guilds"][guild_id]["ticket"]
+    guild_data = data["guilds"][guild_id]
 
-    # 기존 데이터에 없는 값 자동 보충
+    guild_data.setdefault(
+        "join_log_channel",
+        None
+    )
+
+    ticket = guild_data.setdefault(
+        "ticket",
+        {}
+    )
+
+    ticket.setdefault(
+        "configured",
+        False
+    )
+
     ticket.setdefault(
         "panel_channel_id",
         None
@@ -174,12 +160,12 @@ def get_guild_data(guild_id):
 
     ticket.setdefault(
         "close_label",
-        "🔒 티켓 닫기"
+        "티켓 닫기"
     )
 
     ticket.setdefault(
         "delete_label",
-        "🗑️ 티켓 삭제"
+        "티켓 삭제"
     )
 
     ticket.setdefault(
@@ -189,10 +175,10 @@ def get_guild_data(guild_id):
 
     ticket.setdefault(
         "types",
-        DEFAULT_TICKET_TYPES.copy()
+        []
     )
 
-    return data["guilds"][guild_id]
+    return guild_data
 
 
 # ============================================================
@@ -225,15 +211,38 @@ async def require_admin(interaction):
 # Components V2
 # ============================================================
 
-def create_v2_view(container):
+def make_v2_view(*items):
 
     view = discord.ui.LayoutView(
         timeout=None
     )
 
-    view.add_item(container)
+    for item in items:
+        view.add_item(item)
 
     return view
+
+
+# ============================================================
+# 안전한 채널 이름
+# ============================================================
+
+def safe_channel_name(text):
+
+    text = text.lower()
+
+    text = re.sub(
+        r"[^a-z0-9가-힣_-]+",
+        "-",
+        text
+    )
+
+    text = text.strip("-")
+
+    if not text:
+        text = "ticket"
+
+    return text[:80]
 
 
 # ============================================================
@@ -295,7 +304,14 @@ async def create_or_update_channel(
                         reason="서버 정보 채널 업데이트"
                     )
 
-                except Exception as e:
+                except discord.Forbidden:
+
+                    print(
+                        f"❌ {guild.name}: "
+                        f"{channel_type} 이름 변경 권한 없음"
+                    )
+
+                except discord.HTTPException as e:
 
                     print(
                         f"❌ 채널 업데이트 실패: {e}"
@@ -314,11 +330,12 @@ async def create_or_update_channel(
 
     if guild.me:
 
-        overwrites[guild.me] = \
+        overwrites[guild.me] = (
             discord.PermissionOverwrite(
                 view_channel=True,
                 connect=True
             )
+        )
 
     try:
 
@@ -331,7 +348,7 @@ async def create_or_update_channel(
     except Exception as e:
 
         print(
-            f"❌ 채널 생성 실패: {e}"
+            f"❌ 정보 채널 생성 실패: {e}"
         )
 
         return None
@@ -355,21 +372,26 @@ async def embed_command(
     제목: str = None
 ):
 
-    text = (
-        f"# {제목}\n\n{내용}"
-        if 제목
-        else 내용
-    )
+    if 제목:
 
-    container = discord.ui.Container(
-        discord.ui.TextDisplay(text)
-    )
+        text = (
+            f"# {제목}\n\n"
+            f"{내용}"
+        )
 
-    view = create_v2_view(
-        container
-    )
+    else:
+
+        text = 내용
 
     try:
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(text)
+        )
+
+        view = make_v2_view(
+            container
+        )
 
         await interaction.channel.send(
             view=view
@@ -389,7 +411,7 @@ async def embed_command(
         if not interaction.response.is_done():
 
             await interaction.response.send_message(
-                "❌ 메시지를 생성하지 못했습니다.",
+                "❌ 메시지를 생성할 수 없습니다.",
                 ephemeral=True
             )
 
@@ -433,13 +455,16 @@ async def server_info(interaction):
         else "알 수 없음"
     )
 
+    created_at = guild.created_at.strftime(
+        "%Y년 %m월 %d일"
+    )
+
     text = (
         f"# 📊 {guild.name}\n\n"
         f"👤 **Humans:** {humans}\n"
         f"🤖 **Bots:** {bots}\n"
         f"👥 **Members:** {total}\n\n"
-        f"📅 **생성일:** "
-        f"{guild.created_at:%Y년 %m월 %d일}\n"
+        f"📅 **생성일:** {created_at}\n"
         f"👑 **서버장:** {owner_text}\n"
         f"📌 **채널 수:** {len(guild.channels)}\n"
         f"🎨 **역할 수:** {len(guild.roles)}"
@@ -450,7 +475,7 @@ async def server_info(interaction):
     )
 
     await interaction.response.send_message(
-        view=create_v2_view(container)
+        view=make_v2_view(container)
     )
 
 
@@ -467,7 +492,8 @@ async def info_channel(interaction):
     if not await require_admin(interaction):
         return
 
-    await interaction.response.defer(
+    await interaction.response.send_message(
+        "🔄 업데이트 중...",
         ephemeral=True
     )
 
@@ -477,16 +503,18 @@ async def info_channel(interaction):
             interaction.guild
         )
 
-        await interaction.followup.send(
-            "✅ 정보 채널이 업데이트되었습니다.",
-            ephemeral=True
+        await interaction.edit_original_response(
+            content="✅ 정보 채널이 업데이트되었습니다."
         )
 
     except Exception as e:
 
-        await interaction.followup.send(
-            f"❌ 오류: {e}",
-            ephemeral=True
+        print(
+            f"❌ 정보 채널 오류: {e}"
+        )
+
+        await interaction.edit_original_response(
+            content="❌ 업데이트 실패"
         )
 
 
@@ -534,7 +562,7 @@ async def join_log(interaction):
     save_data()
 
     await interaction.response.send_message(
-        "✅ 현재 채널이 입장 로그 채널로 설정되었습니다.",
+        "✅ 현재 채널을 입장 로그 채널로 설정했습니다.",
         ephemeral=True
     )
 
@@ -580,14 +608,16 @@ async def send_join_log(member):
         f"{member.guild.member_count or 0}명"
     )
 
-    container = discord.ui.Container(
-        discord.ui.TextDisplay(text)
-    )
-
     try:
 
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(text)
+        )
+
         await channel.send(
-            view=create_v2_view(container)
+            view=make_v2_view(
+                container
+            )
         )
 
     except Exception as e:
@@ -598,10 +628,364 @@ async def send_join_log(member):
 
 
 # ============================================================
-# 티켓 패널
+# 티켓 설정 상태 텍스트
 # ============================================================
 
-class TicketSelect(
+def ticket_settings_text(guild):
+
+    ticket = get_guild_data(
+        guild.id
+    )["ticket"]
+
+    types = ticket["types"]
+
+    role_id = ticket.get(
+        "support_role_id"
+    )
+
+    role = guild.get_role(
+        role_id
+    ) if role_id else None
+
+    role_text = (
+        role.mention
+        if role
+        else "❌ 설정되지 않음"
+    )
+
+    channel_id = ticket.get(
+        "panel_channel_id"
+    )
+
+    channel = guild.get_channel(
+        channel_id
+    ) if channel_id else None
+
+    channel_text = (
+        channel.mention
+        if channel
+        else "❌ 설정되지 않음"
+    )
+
+    if types:
+
+        type_lines = []
+
+        for i, item in enumerate(
+            types,
+            1
+        ):
+
+            emoji = item.get(
+                "emoji",
+                ""
+            )
+
+            type_lines.append(
+                f"{i}. {emoji} **{item['name']}**"
+            )
+
+        type_text = "\n".join(
+            type_lines
+        )
+
+    else:
+
+        type_text = (
+            "❌ 등록된 티켓 항목이 없습니다."
+        )
+
+    archive_text = (
+        "🟢 켜짐"
+        if ticket["archive_on_close"]
+        else "🔴 꺼짐"
+    )
+
+    return (
+        f"# ⚙️ 티켓 설정\n\n"
+        f"**티켓 제목**\n"
+        f"`{ticket['title']}`\n\n"
+        f"**티켓 설명**\n"
+        f"{ticket['description']}\n\n"
+        f"**담당 역할**\n"
+        f"{role_text}\n\n"
+        f"**패널 채널**\n"
+        f"{channel_text}\n\n"
+        f"**닫을 때 보관**\n"
+        f"{archive_text}\n\n"
+        f"**티켓 항목**\n"
+        f"{type_text}"
+    )
+
+
+# ============================================================
+# 티켓 설정 Modal
+# ============================================================
+
+class TicketBasicModal(
+    discord.ui.Modal,
+    title="티켓 기본 설정"
+):
+
+    title_input = discord.ui.TextInput(
+        label="티켓 제목",
+        placeholder="예: 🎫 문의하기",
+        max_length=100
+    )
+
+    description_input = discord.ui.TextInput(
+        label="티켓 설명",
+        placeholder="문의하실 항목을 선택해주세요.",
+        style=discord.TextStyle.paragraph,
+        max_length=1000
+    )
+
+    close_input = discord.ui.TextInput(
+        label="닫기 버튼 이름",
+        placeholder="티켓 닫기",
+        max_length=80
+    )
+
+    delete_input = discord.ui.TextInput(
+        label="삭제 버튼 이름",
+        placeholder="티켓 삭제",
+        max_length=80
+    )
+
+    def __init__(self, guild_id):
+
+        super().__init__()
+
+        self.guild_id = guild_id
+
+        ticket = get_guild_data(
+            guild_id
+        )["ticket"]
+
+        self.title_input.default = ticket[
+            "title"
+        ]
+
+        self.description_input.default = ticket[
+            "description"
+        ]
+
+        self.close_input.default = ticket[
+            "close_label"
+        ]
+
+        self.delete_input.default = ticket[
+            "delete_label"
+        ]
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        ticket = get_guild_data(
+            self.guild_id
+        )["ticket"]
+
+        ticket["title"] = str(
+            self.title_input.value
+        )
+
+        ticket["description"] = str(
+            self.description_input.value
+        )
+
+        ticket["close_label"] = str(
+            self.close_input.value
+        )
+
+        ticket["delete_label"] = str(
+            self.delete_input.value
+        )
+
+        save_data()
+
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
+        )
+
+
+# ============================================================
+# 티켓 항목 추가 Modal
+# ============================================================
+
+class AddTicketTypeModal(
+    discord.ui.Modal,
+    title="티켓 항목 추가"
+):
+
+    name_input = discord.ui.TextInput(
+        label="항목 이름",
+        placeholder="예: 구매 문의",
+        max_length=80
+    )
+
+    emoji_input = discord.ui.TextInput(
+        label="이모지",
+        placeholder="예: 🛒",
+        required=False,
+        max_length=100
+    )
+
+    description_input = discord.ui.TextInput(
+        label="설명",
+        placeholder="예: 구매 관련 문의",
+        max_length=100
+    )
+
+    def __init__(self, guild_id):
+
+        super().__init__()
+
+        self.guild_id = guild_id
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        guild_data = get_guild_data(
+            self.guild_id
+        )
+
+        types = guild_data[
+            "ticket"
+        ]["types"]
+
+        if len(types) >= 25:
+
+            await interaction.response.send_message(
+                "❌ 드롭다운에는 최대 25개까지 추가할 수 있습니다.",
+                ephemeral=True
+            )
+
+            return
+
+        types.append({
+            "name": str(
+                self.name_input.value
+            ),
+            "emoji": str(
+                self.emoji_input.value
+            ),
+            "description": str(
+                self.description_input.value
+            )
+        })
+
+        save_data()
+
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
+        )
+
+
+# ============================================================
+# 티켓 항목 수정 Modal
+# ============================================================
+
+class EditTicketTypeModal(
+    discord.ui.Modal,
+    title="티켓 항목 수정"
+):
+
+    name_input = discord.ui.TextInput(
+        label="항목 이름",
+        max_length=80
+    )
+
+    emoji_input = discord.ui.TextInput(
+        label="이모지",
+        required=False,
+        max_length=100
+    )
+
+    description_input = discord.ui.TextInput(
+        label="설명",
+        max_length=100
+    )
+
+    def __init__(
+        self,
+        guild_id,
+        index
+    ):
+
+        super().__init__()
+
+        self.guild_id = guild_id
+        self.index = index
+
+        item = get_guild_data(
+            guild_id
+        )["ticket"]["types"][index]
+
+        self.name_input.default = item[
+            "name"
+        ]
+
+        self.emoji_input.default = item.get(
+            "emoji",
+            ""
+        )
+
+        self.description_input.default = item[
+            "description"
+        ]
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        item = get_guild_data(
+            self.guild_id
+        )["ticket"]["types"][self.index]
+
+        item["name"] = str(
+            self.name_input.value
+        )
+
+        item["emoji"] = str(
+            self.emoji_input.value
+        )
+
+        item["description"] = str(
+            self.description_input.value
+        )
+
+        save_data()
+
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
+        )
+
+
+# ============================================================
+# 티켓 항목 선택
+# ============================================================
+
+class TicketEditSelect(
     discord.ui.Select
 ):
 
@@ -609,798 +993,183 @@ class TicketSelect(
 
         self.guild_id = guild_id
 
-        guild_data = get_guild_data(
+        ticket = get_guild_data(
             guild_id
-        )
-
-        types = guild_data[
-            "ticket"
-        ]["types"]
+        )["ticket"]
 
         options = []
 
-        for index, ticket_type in enumerate(types):
+        for index, item in enumerate(
+            ticket["types"]
+        ):
 
-            try:
+            kwargs = {
+                "label": item["name"][:100],
+                "description": item["description"][:100],
+                "value": str(index)
+            }
 
-                option = discord.SelectOption(
-                    label=ticket_type["name"][:100],
-                    description=ticket_type[
-                        "description"
-                    ][:100],
-                    emoji=ticket_type["emoji"],
-                    value=str(index)
+            emoji = item.get(
+                "emoji",
+                ""
+            )
+
+            if emoji:
+                kwargs["emoji"] = emoji
+
+            options.append(
+                discord.SelectOption(
+                    **kwargs
                 )
-
-                options.append(option)
-
-            except Exception:
-
-                # 잘못된 이모지 때문에 패널 전체가
-                # 깨지는 것을 방지
-                options.append(
-                    discord.SelectOption(
-                        label=ticket_type["name"][:100],
-                        description=ticket_type[
-                            "description"
-                        ][:100],
-                        value=str(index)
-                    )
-                )
+            )
 
         if not options:
 
             options.append(
                 discord.SelectOption(
-                    label="티켓 유형 없음",
-                    description="관리자가 유형을 추가해주세요.",
+                    label="등록된 항목 없음",
                     value="none"
                 )
             )
 
         super().__init__(
-            placeholder="문의 유형을 선택하세요",
+            placeholder="수정할 티켓 항목 선택",
             options=options,
-            min_values=1,
-            max_values=1,
-            custom_id=f"ticket_select:{guild_id}"
+            custom_id=f"ticket_edit:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
-        if self.values[0] == "none":
+        if not await require_admin(interaction):
+            return
+
+        value = self.values[0]
+
+        if value == "none":
 
             await interaction.response.send_message(
-                "❌ 등록된 티켓 유형이 없습니다.",
+                "❌ 먼저 티켓 항목을 추가해주세요.",
                 ephemeral=True
             )
 
             return
 
-        index = int(
-            self.values[0]
-        )
-
-        guild_data = get_guild_data(
-            interaction.guild.id
-        )
-
-        types = guild_data[
-            "ticket"
-        ]["types"]
-
-        if index >= len(types):
-
-            await interaction.response.send_message(
-                "❌ 해당 티켓 유형을 찾을 수 없습니다.",
-                ephemeral=True
+        await interaction.response.send_modal(
+            EditTicketTypeModal(
+                self.guild_id,
+                int(value)
             )
-
-            return
-
-        await create_ticket(
-            interaction,
-            types[index]
         )
 
 
-class TicketPanelView(
-    discord.ui.LayoutView
+# ============================================================
+# 티켓 항목 삭제 Select
+# ============================================================
+
+class TicketDeleteSelect(
+    discord.ui.Select
 ):
 
     def __init__(self, guild_id):
 
-        super().__init__(
-            timeout=None
-        )
+        self.guild_id = guild_id
 
-        guild_data = get_guild_data(
+        ticket = get_guild_data(
             guild_id
-        )
+        )["ticket"]
 
-        ticket = guild_data[
-            "ticket"
-        ]
+        options = []
 
-        container = discord.ui.Container()
-
-        container.add_item(
-            discord.ui.TextDisplay(
-                f"# {ticket['title']}"
-            )
-        )
-
-        container.add_item(
-            discord.ui.TextDisplay(
-                ticket["description"]
-            )
-        )
-
-        row = discord.ui.ActionRow()
-
-        row.add_item(
-            TicketSelect(guild_id)
-        )
-
-        container.add_item(
-            row
-        )
-
-        self.add_item(
-            container
-        )
-
-
-# ============================================================
-# 티켓 생성
-# ============================================================
-
-async def create_ticket(
-    interaction,
-    ticket_type
-):
-
-    guild = interaction.guild
-    member = interaction.user
-
-    guild_data = get_guild_data(
-        guild.id
-    )
-
-    ticket = guild_data[
-        "ticket"
-    ]
-
-    # 이미 열린 티켓 확인
-    for channel in guild.text_channels:
-
-        if not channel.topic:
-            continue
-
-        if channel.topic.startswith(
-            f"ticket_owner:{member.id}"
+        for index, item in enumerate(
+            ticket["types"]
         ):
 
-            await interaction.response.send_message(
-                f"❌ 이미 티켓이 있습니다.\n{channel.mention}",
-                ephemeral=True
+            kwargs = {
+                "label": item["name"][:100],
+                "value": str(index)
+            }
+
+            emoji = item.get(
+                "emoji",
+                ""
             )
 
-            return
+            if emoji:
+                kwargs["emoji"] = emoji
 
-    support_role = None
-
-    role_id = ticket.get(
-        "support_role_id"
-    )
-
-    if role_id:
-
-        support_role = guild.get_role(
-            role_id
-        )
-
-    overwrites = {
-
-        guild.default_role:
-            discord.PermissionOverwrite(
-                view_channel=False
-            ),
-
-        member:
-            discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True,
-                embed_links=True
+            options.append(
+                discord.SelectOption(
+                    **kwargs
+                )
             )
-    }
 
-    if support_role:
+        if not options:
 
-        overwrites[
-            support_role
-        ] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_messages=True
-        )
-
-    if guild.me:
-
-        overwrites[
-            guild.me
-        ] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_channels=True,
-            manage_messages=True
-        )
-
-    safe_name = re.sub(
-        r"[^a-zA-Z0-9가-힣_-]",
-        "",
-        member.display_name
-    )[:20]
-
-    if not safe_name:
-        safe_name = "user"
-
-    channel_name = (
-        f"ticket-{safe_name}"
-    )
-
-    try:
-
-        channel = await guild.create_text_channel(
-            name=channel_name,
-            overwrites=overwrites,
-            topic=(
-                f"ticket_owner:{member.id}"
-                f"|status:open"
-            ),
-            reason="티켓 생성"
-        )
-
-    except discord.Forbidden:
-
-        await interaction.response.send_message(
-            "❌ 채널 생성 권한이 없습니다.",
-            ephemeral=True
-        )
-
-        return
-
-    text = (
-        f"# {ticket_type['emoji']} "
-        f"{ticket_type['name']}\n\n"
-        f"👤 문의자: {member.mention}\n\n"
-        f"문의 내용을 남겨주세요."
-    )
-
-    container = discord.ui.Container()
-
-    container.add_item(
-        discord.ui.TextDisplay(text)
-    )
-
-    row = discord.ui.ActionRow()
-
-    row.add_item(
-        TicketCloseButton(
-            guild.id,
-            ticket["close_label"]
-        )
-    )
-
-    row.add_item(
-        TicketDeleteButton(
-            guild.id,
-            ticket["delete_label"]
-        )
-    )
-
-    container.add_item(
-        row
-    )
-
-    try:
-
-        await channel.send(
-            view=create_v2_view(
-                container
+            options.append(
+                discord.SelectOption(
+                    label="등록된 항목 없음",
+                    value="none"
+                )
             )
-        )
-
-        await interaction.response.send_message(
-            f"✅ 티켓이 생성되었습니다.\n{channel.mention}",
-            ephemeral=True
-        )
-
-    except Exception as e:
-
-        print(
-            f"❌ 티켓 UI 오류: {e}"
-        )
-
-        await interaction.response.send_message(
-            f"❌ 티켓 UI 생성 실패: `{e}`",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# 티켓 사용자 / 관리자 확인
-# ============================================================
-
-def get_ticket_owner(channel):
-
-    if not channel.topic:
-        return None
-
-    match = re.search(
-        r"ticket_owner:(\d+)",
-        channel.topic
-    )
-
-    if not match:
-        return None
-
-    return int(
-        match.group(1)
-    )
-
-
-def is_ticket_staff(interaction):
-
-    if interaction.guild is None:
-        return False
-
-    if interaction.user.guild_permissions.administrator:
-        return True
-
-    guild_data = get_guild_data(
-        interaction.guild.id
-    )
-
-    role_id = guild_data[
-        "ticket"
-    ].get(
-        "support_role_id"
-    )
-
-    if not role_id:
-        return False
-
-    role = interaction.guild.get_role(
-        role_id
-    )
-
-    return role in interaction.user.roles if role else False
-
-
-# ============================================================
-# 티켓 닫기
-# ============================================================
-
-class TicketCloseButton(
-    discord.ui.Button
-):
-
-    def __init__(
-        self,
-        guild_id,
-        label
-    ):
-
-        self.guild_id = guild_id
 
         super().__init__(
-            label=label[:80],
-            emoji="🔒",
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"ticket_close:{guild_id}"
-        )
-
-    async def callback(self, interaction):
-
-        channel = interaction.channel
-
-        if not isinstance(
-            channel,
-            discord.TextChannel
-        ):
-            return
-
-        owner_id = get_ticket_owner(
-            channel
-        )
-
-        if (
-            interaction.user.id != owner_id
-            and not is_ticket_staff(interaction)
-        ):
-
-            await interaction.response.send_message(
-                "❌ 이 티켓을 닫을 권한이 없습니다.",
-                ephemeral=True
-            )
-
-            return
-
-        guild_data = get_guild_data(
-            interaction.guild.id
-        )
-
-        archive = guild_data[
-            "ticket"
-        ].get(
-            "archive_on_close",
-            True
-        )
-
-        # ====================================================
-        # 보관 ON
-        # ====================================================
-
-        if archive:
-
-            if owner_id:
-
-                owner = interaction.guild.get_member(
-                    owner_id
-                )
-
-                if owner:
-
-                    try:
-
-                        await channel.set_permissions(
-                            owner,
-                            view_channel=False,
-                            send_messages=False,
-                            read_message_history=False
-                        )
-
-                    except Exception as e:
-
-                        print(
-                            f"❌ 사용자 권한 제거 실패: {e}"
-                        )
-
-            try:
-
-                await channel.edit(
-                    name=(
-                        f"closed-{channel.name}"
-                        if not channel.name.startswith("closed-")
-                        else channel.name
-                    ),
-                    topic=(
-                        f"ticket_owner:{owner_id}"
-                        f"|status:closed"
-                    )
-                )
-
-            except Exception:
-                pass
-
-            await interaction.response.send_message(
-                "🔒 티켓이 닫혔습니다.\n"
-                "관리자에게는 계속 표시됩니다.",
-            )
-
-        # ====================================================
-        # 보관 OFF
-        # ====================================================
-
-        else:
-
-            await interaction.response.send_message(
-                "🗑️ 티켓을 닫고 삭제합니다."
-            )
-
-            await channel.delete(
-                reason="티켓 닫기 - 보관 OFF"
-            )
-
-
-# ============================================================
-# 티켓 삭제
-# ============================================================
-
-class TicketDeleteButton(
-    discord.ui.Button
-):
-
-    def __init__(
-        self,
-        guild_id,
-        label
-    ):
-
-        self.guild_id = guild_id
-
-        super().__init__(
-            label=label[:80],
-            emoji="🗑️",
-            style=discord.ButtonStyle.danger,
+            placeholder="삭제할 티켓 항목 선택",
+            options=options,
             custom_id=f"ticket_delete:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
-        if not is_ticket_staff(
-            interaction
-        ):
+        if not await require_admin(interaction):
+            return
+
+        value = self.values[0]
+
+        if value == "none":
 
             await interaction.response.send_message(
-                "❌ 관리자 또는 설정된 티켓 역할만 삭제할 수 있습니다.",
+                "❌ 삭제할 항목이 없습니다.",
                 ephemeral=True
             )
 
             return
 
-        await interaction.response.send_message(
-            "🗑️ 티켓을 삭제합니다."
+        ticket = get_guild_data(
+            self.guild_id
+        )["ticket"]
+
+        removed = ticket["types"].pop(
+            int(value)
         )
 
-        try:
-
-            await interaction.channel.delete(
-                reason=f"티켓 삭제 - {interaction.user}"
-            )
-
-        except Exception as e:
-
-            print(
-                f"❌ 티켓 삭제 실패: {e}"
-            )
-
-
-# ============================================================
-# 티켓 설정 UI
-# ============================================================
-
-class TicketSettingsView(
-    discord.ui.LayoutView
-):
-
-    def __init__(self, guild_id):
-
-        super().__init__(
-            timeout=300
-        )
-
-        self.guild_id = guild_id
-
-        guild = bot.get_guild(
-            guild_id
-        )
-
-        guild_data = get_guild_data(
-            guild_id
-        )
-
-        ticket = guild_data[
-            "ticket"
-        ]
-
-        role_id = ticket.get(
-            "support_role_id"
-        )
-
-        role = (
-            guild.get_role(role_id)
-            if guild and role_id
-            else None
-        )
-
-        role_text = (
-            role.mention
-            if role
-            else "❌ 설정 안 됨"
-        )
-
-        archive_text = (
-            "🟢 켜짐 — 닫으면 관리자에게 보관"
-            if ticket["archive_on_close"]
-            else "🔴 꺼짐 — 닫으면 티켓 삭제"
-        )
-
-        types_text = ""
-
-        for i, item in enumerate(
-            ticket["types"],
-            start=1
-        ):
-
-            types_text += (
-                f"{i}. {item['emoji']} "
-                f"**{item['name']}**\n"
-                f"   └ {item['description']}\n"
-            )
-
-        if not types_text:
-            types_text = "❌ 없음"
-
-        text = (
-            "# 🎫 티켓 설정\n\n"
-
-            "## 현재 설정\n"
-            f"📌 제목: `{ticket['title']}`\n"
-            f"📝 설명: `{ticket['description']}`\n"
-            f"👮 담당 역할: {role_text}\n"
-            f"📦 닫기 후 보관: {archive_text}\n"
-            f"🔒 닫기 버튼: `{ticket['close_label']}`\n"
-            f"🗑️ 삭제 버튼: `{ticket['delete_label']}`\n\n"
-
-            "## 📋 드롭다운 항목\n"
-            f"{types_text}\n"
-
-            "아래 버튼으로 설정을 변경하면 "
-            "**이 UI의 현재 설정도 바로 갱신됩니다.**"
-        )
-
-        container = discord.ui.Container()
-
-        container.add_item(
-            discord.ui.TextDisplay(text)
-        )
-
-        # ----------------------------------------------------
-        # 1행
-        # ----------------------------------------------------
-
-        row1 = discord.ui.ActionRow()
-
-        row1.add_item(
-            TicketRoleButton(
-                guild_id
-            )
-        )
-
-        row1.add_item(
-            TicketTitleButton(
-                guild_id
-            )
-        )
-
-        row1.add_item(
-            TicketDescriptionButton(
-                guild_id
-            )
-        )
-
-        # ----------------------------------------------------
-        # 2행
-        # ----------------------------------------------------
-
-        row2 = discord.ui.ActionRow()
-
-        row2.add_item(
-            TicketAddTypeButton(
-                guild_id
-            )
-        )
-
-        row2.add_item(
-            TicketRemoveTypeButton(
-                guild_id
-            )
-        )
-
-        row2.add_item(
-            TicketButtonNameButton(
-                guild_id
-            )
-        )
-
-        # ----------------------------------------------------
-        # 3행
-        # ----------------------------------------------------
-
-        row3 = discord.ui.ActionRow()
-
-        row3.add_item(
-            TicketArchiveButton(
-                guild_id
-            )
-        )
-
-        row3.add_item(
-            TicketPanelButton(
-                guild_id
-            )
-        )
-
-        # UI 아래쪽에 버튼 배치
-        container.add_item(row1)
-        container.add_item(row2)
-        container.add_item(row3)
-
-        self.add_item(
-            container
-        )
-
-
-async def refresh_settings_ui(
-    interaction
-):
-
-    if interaction.message is None:
-        return
-
-    try:
+        save_data()
 
         await interaction.response.edit_message(
-            content=None,
-            embed=None,
-            embeds=[],
-            attachments=[],
+            content=ticket_settings_text(
+                interaction.guild
+            ),
             view=TicketSettingsView(
-                interaction.guild.id
+                self.guild_id
             )
         )
-
-    except Exception as e:
 
         print(
-            f"❌ 설정 UI 갱신 실패: {e}"
+            f"🗑️ 티켓 항목 삭제: "
+            f"{removed['name']}"
         )
 
 
 # ============================================================
-# 역할 설정
+# 담당 역할 설정
 # ============================================================
 
-class TicketRoleButton(
-    discord.ui.Button
-):
-
-    def __init__(self, guild_id):
-
-        self.guild_id = guild_id
-
-        super().__init__(
-            label="역할 설정",
-            emoji="👮",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"ticket_role:{guild_id}"
-        )
-
-    async def callback(self, interaction):
-
-        await interaction.response.send_message(
-            "아래에서 티켓을 볼 역할을 선택하세요.",
-            view=TicketRoleView(
-                self.guild_id
-            ),
-            ephemeral=True
-        )
-
-
-class TicketRoleView(
-    discord.ui.View
-):
-
-    def __init__(self, guild_id):
-
-        super().__init__(
-            timeout=120
-        )
-
-        self.add_item(
-            TicketRoleSelect(
-                guild_id
-            )
-        )
-
-
-class TicketRoleSelect(
+class SupportRoleSelect(
     discord.ui.RoleSelect
 ):
 
@@ -1411,36 +1180,155 @@ class TicketRoleSelect(
         super().__init__(
             placeholder="티켓 담당 역할 선택",
             min_values=1,
-            max_values=1
+            max_values=1,
+            custom_id=f"ticket_role:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not await require_admin(interaction):
+            return
 
         role = self.values[0]
 
-        guild_data = get_guild_data(
+        ticket = get_guild_data(
             self.guild_id
-        )
+        )["ticket"]
 
-        guild_data[
-            "ticket"
-        ][
-            "support_role_id"
-        ] = role.id
+        ticket["support_role_id"] = role.id
 
         save_data()
 
-        await interaction.response.send_message(
-            f"✅ 담당 역할을 {role.mention}으로 설정했습니다.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
         )
 
 
 # ============================================================
-# 제목 변경
+# 패널 채널 설정
 # ============================================================
 
-class TicketTitleButton(
+class PanelChannelSelect(
+    discord.ui.ChannelSelect
+):
+
+    def __init__(self, guild_id):
+
+        self.guild_id = guild_id
+
+        super().__init__(
+            placeholder="티켓 패널을 보낼 채널 선택",
+            channel_types=[
+                discord.ChannelType.text
+            ],
+            min_values=1,
+            max_values=1,
+            custom_id=f"ticket_channel:{guild_id}"
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not await require_admin(interaction):
+            return
+
+        channel = self.values[0]
+
+        ticket = get_guild_data(
+            self.guild_id
+        )["ticket"]
+
+        ticket["panel_channel_id"] = channel.id
+
+        save_data()
+
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
+        )
+
+
+# ============================================================
+# 보관 ON/OFF
+# ============================================================
+
+class ArchiveToggle(
+    discord.ui.Button
+):
+
+    def __init__(self, guild_id):
+
+        self.guild_id = guild_id
+
+        ticket = get_guild_data(
+            guild_id
+        )["ticket"]
+
+        enabled = ticket[
+            "archive_on_close"
+        ]
+
+        super().__init__(
+            label=(
+                "보관: ON"
+                if enabled
+                else "보관: OFF"
+            ),
+            style=(
+                discord.ButtonStyle.success
+                if enabled
+                else discord.ButtonStyle.secondary
+            ),
+            custom_id=f"ticket_archive:{guild_id}"
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not await require_admin(interaction):
+            return
+
+        ticket = get_guild_data(
+            self.guild_id
+        )["ticket"]
+
+        ticket["archive_on_close"] = not ticket[
+            "archive_on_close"
+        ]
+
+        save_data()
+
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketSettingsView(
+                self.guild_id
+            )
+        )
+
+
+# ============================================================
+# 기본 설정 버튼
+# ============================================================
+
+class TicketBasicButton(
     discord.ui.Button
 ):
 
@@ -1449,138 +1337,32 @@ class TicketTitleButton(
         self.guild_id = guild_id
 
         super().__init__(
-            label="제목 변경",
-            emoji="📝",
+            label="기본 설정",
+            emoji="⚙️",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"ticket_title:{guild_id}"
+            custom_id=f"ticket_basic:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not await require_admin(interaction):
+            return
 
         await interaction.response.send_modal(
-            TicketTitleModal(
+            TicketBasicModal(
                 self.guild_id
             )
         )
 
 
-class TicketTitleModal(
-    discord.ui.Modal,
-    title="티켓 제목 변경"
-):
-
-    value = discord.ui.TextInput(
-        label="제목",
-        placeholder="예: 🎫 고객센터",
-        max_length=100
-    )
-
-    def __init__(self, guild_id):
-
-        super().__init__()
-
-        self.guild_id = guild_id
-
-    async def on_submit(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
-        )
-
-        guild_data[
-            "ticket"
-        ]["title"] = str(
-            self.value.value
-        )
-
-        save_data()
-
-        # 기존 패널 즉시 업데이트
-        await update_ticket_panel(
-            interaction.guild
-        )
-
-        await interaction.response.send_message(
-            "✅ 제목을 변경하고 패널도 업데이트했습니다.",
-            ephemeral=True
-        )
-
-
 # ============================================================
-# 설명 변경
+# 항목 추가 버튼
 # ============================================================
 
-class TicketDescriptionButton(
-    discord.ui.Button
-):
-
-    def __init__(self, guild_id):
-
-        self.guild_id = guild_id
-
-        super().__init__(
-            label="설명 변경",
-            emoji="📄",
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"ticket_description:{guild_id}"
-        )
-
-    async def callback(self, interaction):
-
-        await interaction.response.send_modal(
-            TicketDescriptionModal(
-                self.guild_id
-            )
-        )
-
-
-class TicketDescriptionModal(
-    discord.ui.Modal,
-    title="티켓 설명 변경"
-):
-
-    value = discord.ui.TextInput(
-        label="설명",
-        placeholder="문의하실 항목을 선택해주세요.",
-        style=discord.TextStyle.paragraph,
-        max_length=1000
-    )
-
-    def __init__(self, guild_id):
-
-        super().__init__()
-
-        self.guild_id = guild_id
-
-    async def on_submit(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
-        )
-
-        guild_data[
-            "ticket"
-        ]["description"] = str(
-            self.value.value
-        )
-
-        save_data()
-
-        await update_ticket_panel(
-            interaction.guild
-        )
-
-        await interaction.response.send_message(
-            "✅ 설명을 변경하고 패널도 업데이트했습니다.",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# 티켓 유형 추가
-# ============================================================
-
-class TicketAddTypeButton(
+class AddTypeButton(
     discord.ui.Button
 ):
 
@@ -1595,98 +1377,76 @@ class TicketAddTypeButton(
             custom_id=f"ticket_add:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not await require_admin(interaction):
+            return
 
         await interaction.response.send_modal(
-            TicketAddTypeModal(
+            AddTicketTypeModal(
                 self.guild_id
             )
         )
 
 
-class TicketAddTypeModal(
-    discord.ui.Modal,
-    title="드롭다운 항목 추가"
+# ============================================================
+# 항목 수정 버튼
+# ============================================================
+
+class EditTypeButton(
+    discord.ui.Button
 ):
-
-    name = discord.ui.TextInput(
-        label="항목 이름",
-        placeholder="예: 환불 문의",
-        max_length=80
-    )
-
-    emoji = discord.ui.TextInput(
-        label="이모지",
-        placeholder="예: 💰",
-        max_length=20
-    )
-
-    description = discord.ui.TextInput(
-        label="설명",
-        placeholder="환불 관련 문의",
-        max_length=100
-    )
 
     def __init__(self, guild_id):
 
-        super().__init__()
-
         self.guild_id = guild_id
 
-    async def on_submit(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
+        super().__init__(
+            label="항목 수정",
+            emoji="✏️",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"ticket_edit_button:{guild_id}"
         )
 
-        types = guild_data[
-            "ticket"
-        ]["types"]
+    async def callback(
+        self,
+        interaction
+    ):
 
-        if len(types) >= 25:
+        if not await require_admin(interaction):
+            return
+
+        ticket = get_guild_data(
+            self.guild_id
+        )["ticket"]
+
+        if not ticket["types"]:
 
             await interaction.response.send_message(
-                "❌ Discord 드롭다운은 최대 25개 항목까지 가능합니다.",
+                "❌ 수정할 티켓 항목이 없습니다.",
                 ephemeral=True
             )
 
             return
 
-        emoji = str(
-            self.emoji.value
-        ).strip()
-
-        # 커스텀 이모지는 그대로 받을 수 있도록
-        # 문자열 형태로 저장
-        types.append(
-            {
-                "name": str(
-                    self.name.value
-                ),
-                "emoji": emoji,
-                "description": str(
-                    self.description.value
-                )
-            }
-        )
-
-        save_data()
-
-        await update_ticket_panel(
-            interaction.guild
-        )
-
-        await interaction.response.send_message(
-            "✅ 드롭다운 항목을 추가하고 패널을 즉시 업데이트했습니다.",
-            ephemeral=True
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketEditView(
+                self.guild_id
+            )
         )
 
 
 # ============================================================
-# 항목 삭제
+# 항목 삭제 버튼
 # ============================================================
 
-class TicketRemoveTypeButton(
+class DeleteTypeButton(
     discord.ui.Button
 ):
 
@@ -1696,220 +1456,47 @@ class TicketRemoveTypeButton(
 
         super().__init__(
             label="항목 삭제",
-            emoji="➖",
+            emoji="🗑️",
             style=discord.ButtonStyle.danger,
-            custom_id=f"ticket_remove:{guild_id}"
+            custom_id=f"ticket_delete_button:{guild_id}"
         )
 
-    async def callback(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
-        )
-
-        types = guild_data[
-            "ticket"
-        ]["types"]
-
-        if not types:
-
-            await interaction.response.send_message(
-                "❌ 삭제할 항목이 없습니다.",
-                ephemeral=True
-            )
-
-            return
-
-        options = []
-
-        for index, item in enumerate(types):
-
-            try:
-
-                options.append(
-                    discord.SelectOption(
-                        label=item["name"][:100],
-                        description=item[
-                            "description"
-                        ][:100],
-                        emoji=item["emoji"],
-                        value=str(index)
-                    )
-                )
-
-            except Exception:
-
-                options.append(
-                    discord.SelectOption(
-                        label=item["name"][:100],
-                        description=item[
-                            "description"
-                        ][:100],
-                        value=str(index)
-                    )
-                )
-
-        view = discord.ui.View(
-            timeout=120
-        )
-
-        view.add_item(
-            TicketRemoveSelect(
-                self.guild_id,
-                options
-            )
-        )
-
-        await interaction.response.send_message(
-            "삭제할 항목을 선택하세요.",
-            view=view,
-            ephemeral=True
-        )
-
-
-class TicketRemoveSelect(
-    discord.ui.Select
-):
-
-    def __init__(
+    async def callback(
         self,
-        guild_id,
-        options
+        interaction
     ):
 
-        self.guild_id = guild_id
+        if not await require_admin(interaction):
+            return
 
-        super().__init__(
-            placeholder="삭제할 항목 선택",
-            options=options,
-            min_values=1,
-            max_values=1
-        )
-
-    async def callback(self, interaction):
-
-        index = int(
-            self.values[0]
-        )
-
-        guild_data = get_guild_data(
+        ticket = get_guild_data(
             self.guild_id
-        )
+        )["ticket"]
 
-        types = guild_data[
-            "ticket"
-        ]["types"]
-
-        if index >= len(types):
+        if not ticket["types"]:
 
             await interaction.response.send_message(
-                "❌ 항목을 찾을 수 없습니다.",
+                "❌ 삭제할 티켓 항목이 없습니다.",
                 ephemeral=True
             )
 
             return
 
-        removed = types.pop(index)
-
-        save_data()
-
-        await update_ticket_panel(
-            interaction.guild
-        )
-
-        await interaction.response.send_message(
-            f"✅ `{removed['name']}` 항목을 삭제했습니다.",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# 버튼 이름 변경
-# ============================================================
-
-class TicketButtonNameButton(
-    discord.ui.Button
-):
-
-    def __init__(self, guild_id):
-
-        self.guild_id = guild_id
-
-        super().__init__(
-            label="버튼 이름",
-            emoji="🔘",
-            style=discord.ButtonStyle.secondary,
-            custom_id=f"ticket_buttons:{guild_id}"
-        )
-
-    async def callback(self, interaction):
-
-        await interaction.response.send_modal(
-            TicketButtonNameModal(
+        await interaction.response.edit_message(
+            content=ticket_settings_text(
+                interaction.guild
+            ),
+            view=TicketDeleteView(
                 self.guild_id
             )
         )
 
 
-class TicketButtonNameModal(
-    discord.ui.Modal,
-    title="티켓 버튼 이름 변경"
-):
-
-    close_name = discord.ui.TextInput(
-        label="닫기 버튼",
-        placeholder="예: 🔒 문의 종료",
-        max_length=80
-    )
-
-    delete_name = discord.ui.TextInput(
-        label="삭제 버튼",
-        placeholder="예: 🗑️ 채널 삭제",
-        max_length=80
-    )
-
-    def __init__(self, guild_id):
-
-        super().__init__()
-
-        self.guild_id = guild_id
-
-    async def on_submit(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
-        )
-
-        ticket = guild_data[
-            "ticket"
-        ]
-
-        ticket[
-            "close_label"
-        ] = str(
-            self.close_name.value
-        )
-
-        ticket[
-            "delete_label"
-        ] = str(
-            self.delete_name.value
-        )
-
-        save_data()
-
-        await interaction.response.send_message(
-            "✅ 버튼 이름을 변경했습니다.\n"
-            "새로 생성되는 티켓부터 적용됩니다.",
-            ephemeral=True
-        )
-
-
 # ============================================================
-# 보관 ON/OFF
+# 패널 적용
 # ============================================================
 
-class TicketArchiveButton(
+class ApplyPanelButton(
     discord.ui.Button
 ):
 
@@ -1918,122 +1505,230 @@ class TicketArchiveButton(
         self.guild_id = guild_id
 
         super().__init__(
-            label="보관 ON/OFF",
-            emoji="📦",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"ticket_archive:{guild_id}"
-        )
-
-    async def callback(self, interaction):
-
-        guild_data = get_guild_data(
-            self.guild_id
-        )
-
-        ticket = guild_data[
-            "ticket"
-        ]
-
-        ticket[
-            "archive_on_close"
-        ] = not ticket[
-            "archive_on_close"
-        ]
-
-        save_data()
-
-        await refresh_settings_ui(
-            interaction
-        )
-
-
-# ============================================================
-# 패널 생성 버튼
-# ============================================================
-
-class TicketPanelButton(
-    discord.ui.Button
-):
-
-    def __init__(self, guild_id):
-
-        self.guild_id = guild_id
-
-        super().__init__(
-            label="패널 업데이트",
-            emoji="🎫",
+            label="패널 적용",
+            emoji="📤",
             style=discord.ButtonStyle.success,
-            custom_id=f"ticket_panel:{guild_id}"
+            custom_id=f"ticket_apply:{guild_id}"
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
-        await update_ticket_panel(
-            interaction.guild
+        if not await require_admin(interaction):
+            return
+
+        guild = interaction.guild
+
+        ticket = get_guild_data(
+            guild.id
+        )["ticket"]
+
+        if not ticket["types"]:
+
+            await interaction.response.send_message(
+                "❌ 먼저 티켓 항목을 하나 이상 추가해주세요.",
+                ephemeral=True
+            )
+
+            return
+
+        if not ticket["support_role_id"]:
+
+            await interaction.response.send_message(
+                "❌ 먼저 담당 역할을 설정해주세요.",
+                ephemeral=True
+            )
+
+            return
+
+        if not ticket["panel_channel_id"]:
+
+            await interaction.response.send_message(
+                "❌ 먼저 패널 채널을 설정해주세요.",
+                ephemeral=True
+            )
+
+            return
+
+        channel = guild.get_channel(
+            ticket["panel_channel_id"]
         )
 
-        await refresh_settings_ui(
-            interaction
-        )
+        if channel is None:
 
+            await interaction.response.send_message(
+                "❌ 패널 채널을 찾을 수 없습니다.",
+                ephemeral=True
+            )
 
-# ============================================================
-# 티켓 패널 업데이트
-# ============================================================
+            return
 
-async def update_ticket_panel(guild):
+        ticket["configured"] = True
 
-    guild_data = get_guild_data(
-        guild.id
-    )
+        save_data()
 
-    ticket = guild_data[
-        "ticket"
-    ]
-
-    channel_id = ticket.get(
-        "panel_channel_id"
-    )
-
-    message_id = ticket.get(
-        "panel_message_id"
-    )
-
-    if not channel_id or not message_id:
-        return False
-
-    channel = guild.get_channel(
-        channel_id
-    )
-
-    if channel is None:
-        return False
-
-    try:
-
-        message = await channel.fetch_message(
-            message_id
-        )
-
-        await message.edit(
-            content=None,
-            embed=None,
-            embeds=[],
-            attachments=[],
+        await channel.send(
             view=TicketPanelView(
                 guild.id
             )
         )
 
-        return True
-
-    except Exception as e:
-
-        print(
-            f"❌ 티켓 패널 업데이트 실패: {e}"
+        await interaction.response.send_message(
+            f"✅ <#{channel.id}>에 티켓 패널을 생성했습니다.",
+            ephemeral=True
         )
 
-        return False
+
+# ============================================================
+# 설정 UI
+# ============================================================
+
+class TicketSettingsView(
+    discord.ui.LayoutView
+):
+
+    def __init__(self, guild_id):
+
+        super().__init__(
+            timeout=None
+        )
+
+        self.guild_id = guild_id
+
+        container = discord.ui.Container(
+
+            discord.ui.TextDisplay(
+                ticket_settings_text(
+                    bot.get_guild(
+                        guild_id
+                    )
+                )
+            ),
+
+            discord.ui.Separator(),
+
+            discord.ui.ActionRow(
+                AddTypeButton(
+                    guild_id
+                ),
+                EditTypeButton(
+                    guild_id
+                ),
+                DeleteTypeButton(
+                    guild_id
+                )
+            ),
+
+            discord.ui.ActionRow(
+                TicketBasicButton(
+                    guild_id
+                ),
+                ArchiveToggle(
+                    guild_id
+                ),
+                ApplyPanelButton(
+                    guild_id
+                )
+            ),
+
+            discord.ui.Separator(),
+
+            discord.ui.TextDisplay(
+                "👤 **담당 역할 설정**"
+            ),
+
+            discord.ui.ActionRow(
+                SupportRoleSelect(
+                    guild_id
+                )
+            ),
+
+            discord.ui.TextDisplay(
+                "📌 **패널 채널 설정**"
+            ),
+
+            discord.ui.ActionRow(
+                PanelChannelSelect(
+                    guild_id
+                )
+            )
+        )
+
+        self.add_item(
+            container
+        )
+
+
+# ============================================================
+# 항목 수정 UI
+# ============================================================
+
+class TicketEditView(
+    discord.ui.LayoutView
+):
+
+    def __init__(self, guild_id):
+
+        super().__init__(
+            timeout=None
+        )
+
+        container = discord.ui.Container(
+
+            discord.ui.TextDisplay(
+                "# ✏️ 티켓 항목 수정\n\n"
+                "수정할 항목을 선택하세요."
+            ),
+
+            discord.ui.Separator(),
+
+            discord.ui.ActionRow(
+                TicketEditSelect(
+                    guild_id
+                )
+            )
+        )
+
+        self.add_item(
+            container
+        )
+
+
+# ============================================================
+# 항목 삭제 UI
+# ============================================================
+
+class TicketDeleteView(
+    discord.ui.LayoutView
+):
+
+    def __init__(self, guild_id):
+
+        super().__init__(
+            timeout=None
+        )
+
+        container = discord.ui.Container(
+
+            discord.ui.TextDisplay(
+                "# 🗑️ 티켓 항목 삭제\n\n"
+                "삭제할 항목을 선택하세요."
+            ),
+
+            discord.ui.Separator(),
+
+            discord.ui.ActionRow(
+                TicketDeleteSelect(
+                    guild_id
+                )
+            )
+        )
+
+        self.add_item(
+            container
+        )
 
 
 # ============================================================
@@ -2042,71 +1737,29 @@ async def update_ticket_panel(guild):
 
 @tree.command(
     name="티켓",
-    description="현재 채널에 티켓 패널을 생성합니다"
+    description="티켓 시스템을 설정합니다"
 )
 async def ticket_command(interaction):
 
     if not await require_admin(interaction):
         return
 
-    guild = interaction.guild
-
     guild_data = get_guild_data(
-        guild.id
+        interaction.guild.id
     )
 
     ticket = guild_data[
         "ticket"
     ]
 
-    # 새 패널 생성
-    try:
-
-        message = await interaction.channel.send(
-            view=TicketPanelView(
-                guild.id
+    # 설정 UI만 열림
+    container = discord.ui.Container(
+        discord.ui.TextDisplay(
+            ticket_settings_text(
+                interaction.guild
             )
         )
-
-        ticket[
-            "panel_channel_id"
-        ] = interaction.channel.id
-
-        ticket[
-            "panel_message_id"
-        ] = message.id
-
-        save_data()
-
-        await interaction.response.send_message(
-            "✅ 티켓 패널을 생성했습니다.",
-            ephemeral=True
-        )
-
-    except Exception as e:
-
-        print(
-            f"❌ 티켓 패널 생성 오류: {e}"
-        )
-
-        await interaction.response.send_message(
-            f"❌ 티켓 패널 생성 실패: `{e}`",
-            ephemeral=True
-        )
-
-
-# ============================================================
-# /티켓설정
-# ============================================================
-
-@tree.command(
-    name="티켓설정",
-    description="티켓 Components V2 설정 UI를 엽니다"
-)
-async def ticket_settings(interaction):
-
-    if not await require_admin(interaction):
-        return
+    )
 
     await interaction.response.send_message(
         view=TicketSettingsView(
@@ -2117,7 +1770,491 @@ async def ticket_settings(interaction):
 
 
 # ============================================================
-# 이벤트
+# 실제 티켓 패널 드롭다운
+# ============================================================
+
+class TicketPanelSelect(
+    discord.ui.Select
+):
+
+    def __init__(self, guild_id):
+
+        self.guild_id = guild_id
+
+        ticket = get_guild_data(
+            guild_id
+        )["ticket"]
+
+        options = []
+
+        for index, item in enumerate(
+            ticket["types"]
+        ):
+
+            kwargs = {
+                "label": item["name"][:100],
+                "description": item["description"][:100],
+                "value": str(index)
+            }
+
+            emoji = item.get(
+                "emoji",
+                ""
+            )
+
+            if emoji:
+                kwargs["emoji"] = emoji
+
+            options.append(
+                discord.SelectOption(
+                    **kwargs
+                )
+            )
+
+        super().__init__(
+            placeholder="문의할 항목을 선택하세요",
+            options=options,
+            custom_id=f"ticket_panel:{guild_id}"
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        guild = interaction.guild
+
+        ticket = get_guild_data(
+            guild.id
+        )["ticket"]
+
+        index = int(
+            self.values[0]
+        )
+
+        item = ticket[
+            "types"
+        ][index]
+
+        # 이미 열린 티켓 확인
+        existing = None
+
+        for channel in guild.text_channels:
+
+            if (
+                channel.topic
+                and f"ticket_user:{interaction.user.id}"
+                in channel.topic
+            ):
+
+                existing = channel
+                break
+
+        if existing:
+
+            await interaction.response.send_message(
+                f"❌ 이미 열린 티켓이 있습니다.\n{existing.mention}",
+                ephemeral=True
+            )
+
+            return
+
+        support_role = guild.get_role(
+            ticket["support_role_id"]
+        )
+
+        if support_role is None:
+
+            await interaction.response.send_message(
+                "❌ 담당 역할이 삭제되었습니다. 관리자가 설정을 다시 해주세요.",
+                ephemeral=True
+            )
+
+            return
+
+        # ====================================================
+        # 티켓 권한
+        # ====================================================
+
+        overwrites = {
+
+            guild.default_role:
+                discord.PermissionOverwrite(
+                    view_channel=False
+                ),
+
+            interaction.user:
+                discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    embed_links=True
+                ),
+
+            support_role:
+                discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    attach_files=True,
+                    embed_links=True
+                )
+        }
+
+        if guild.me:
+
+            overwrites[
+                guild.me
+            ] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True
+            )
+
+        # 관리자 역할은 기본적으로 관리자 권한으로 접근
+        for role in guild.roles:
+
+            if role.permissions.administrator:
+
+                overwrites[
+                    role
+                ] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    send_messages=True,
+                    read_message_history=True,
+                    manage_channels=True,
+                    manage_messages=True
+                )
+
+        channel_name = (
+            f"ticket-{safe_channel_name(item['name'])}-"
+            f"{interaction.user.name}"
+        )
+
+        channel_name = channel_name[
+            :100
+        ]
+
+        try:
+
+            channel = await guild.create_text_channel(
+                name=channel_name,
+                overwrites=overwrites,
+                topic=(
+                    f"ticket_user:{interaction.user.id}"
+                    f"|type:{index}"
+                    f"|closed:false"
+                ),
+                reason="티켓 생성"
+            )
+
+        except discord.Forbidden:
+
+            await interaction.response.send_message(
+                "❌ 채널 생성 권한이 없습니다.",
+                ephemeral=True
+            )
+
+            return
+
+        except Exception as e:
+
+            print(
+                f"❌ 티켓 생성 오류: {e}"
+            )
+
+            await interaction.response.send_message(
+                "❌ 티켓을 생성하지 못했습니다.",
+                ephemeral=True
+            )
+
+            return
+
+        # ====================================================
+        # 티켓 카드
+        # ====================================================
+
+        text = (
+            f"# {item.get('emoji', '🎫')} "
+            f"{item['name']}\n\n"
+            f"{item['description']}\n\n"
+            f"👤 생성자: {interaction.user.mention}\n"
+            f"👥 담당 역할: {support_role.mention}"
+        )
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(text),
+
+            discord.ui.Separator(),
+
+            discord.ui.ActionRow(
+                CloseTicketButton(
+                    guild.id,
+                    interaction.user.id,
+                    ticket["close_label"]
+                ),
+                DeleteTicketButton(
+                    guild.id,
+                    interaction.user.id,
+                    ticket["delete_label"]
+                )
+            )
+        )
+
+        await channel.send(
+            view=make_v2_view(
+                container
+            )
+        )
+
+        await interaction.response.send_message(
+            f"✅ 티켓이 생성되었습니다.\n{channel.mention}",
+            ephemeral=True
+        )
+
+
+# ============================================================
+# 실제 티켓 패널
+# ============================================================
+
+class TicketPanelView(
+    discord.ui.LayoutView
+):
+
+    def __init__(self, guild_id):
+
+        super().__init__(
+            timeout=None
+        )
+
+        ticket = get_guild_data(
+            guild_id
+        )["ticket"]
+
+        container = discord.ui.Container(
+
+            discord.ui.TextDisplay(
+                f"# {ticket['title']}\n\n"
+                f"{ticket['description']}"
+            ),
+
+            discord.ui.Separator(),
+
+            discord.ui.ActionRow(
+                TicketPanelSelect(
+                    guild_id
+                )
+            )
+        )
+
+        self.add_item(
+            container
+        )
+
+
+# ============================================================
+# 티켓 닫기
+# ============================================================
+
+class CloseTicketButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        guild_id,
+        owner_id,
+        label
+    ):
+
+        self.guild_id = guild_id
+        self.owner_id = owner_id
+
+        super().__init__(
+            label=label[:80],
+            emoji="🔒",
+            style=discord.ButtonStyle.secondary,
+            custom_id=(
+                f"ticket_close:"
+                f"{guild_id}:"
+                f"{owner_id}"
+            )
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        channel = interaction.channel
+
+        # 관리자라면 사용자 권한을 건드리지 않고
+        # 티켓을 닫는 것도 가능
+        if interaction.user.id != self.owner_id:
+
+            if not interaction.user.guild_permissions.administrator:
+
+                await interaction.response.send_message(
+                    "❌ 티켓 생성자만 닫을 수 있습니다.",
+                    ephemeral=True
+                )
+
+                return
+
+        guild_data = get_guild_data(
+            interaction.guild.id
+        )
+
+        ticket = guild_data[
+            "ticket"
+        ]
+
+        owner = interaction.guild.get_member(
+            self.owner_id
+        )
+
+        if owner:
+
+            try:
+
+                await channel.set_permissions(
+                    owner,
+                    view_channel=False,
+                    send_messages=False,
+                    read_message_history=False
+                )
+
+            except Exception as e:
+
+                print(
+                    f"❌ 티켓 사용자 권한 제거 실패: {e}"
+                )
+
+        # topic 변경
+        try:
+
+            old_topic = channel.topic or ""
+
+            old_topic = re.sub(
+                r"\|closed:(true|false)",
+                "",
+                old_topic
+            )
+
+            await channel.edit(
+                topic=(
+                    old_topic
+                    + "|closed:true"
+                ),
+                reason="티켓 닫기"
+            )
+
+        except Exception:
+            pass
+
+        if ticket["archive_on_close"]:
+
+            try:
+
+                await channel.edit(
+                    name=f"closed-{channel.name}"[:100],
+                    reason="티켓 보관"
+                )
+
+            except Exception:
+                pass
+
+            await interaction.response.send_message(
+                "🔒 티켓이 닫혔습니다.",
+                ephemeral=True
+            )
+
+        else:
+
+            await interaction.response.send_message(
+                "🗑️ 티켓을 삭제하는 중...",
+                ephemeral=True
+            )
+
+            try:
+
+                await channel.delete(
+                    reason="티켓 닫기 - 자동 삭제"
+                )
+
+            except Exception as e:
+
+                print(
+                    f"❌ 티켓 삭제 실패: {e}"
+                )
+
+
+# ============================================================
+# 티켓 삭제
+# ============================================================
+
+class DeleteTicketButton(
+    discord.ui.Button
+):
+
+    def __init__(
+        self,
+        guild_id,
+        owner_id,
+        label
+    ):
+
+        self.guild_id = guild_id
+        self.owner_id = owner_id
+
+        super().__init__(
+            label=label[:80],
+            emoji="🗑️",
+            style=discord.ButtonStyle.danger,
+            custom_id=(
+                f"ticket_delete:"
+                f"{guild_id}:"
+                f"{owner_id}"
+            )
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        if not interaction.user.guild_permissions.administrator:
+
+            await interaction.response.send_message(
+                "❌ 관리자만 티켓을 삭제할 수 있습니다.",
+                ephemeral=True
+            )
+
+            return
+
+        await interaction.response.send_message(
+            "🗑️ 티켓을 삭제합니다...",
+            ephemeral=True
+        )
+
+        try:
+
+            await interaction.channel.delete(
+                reason="관리자 티켓 삭제"
+            )
+
+        except Exception as e:
+
+            print(
+                f"❌ 티켓 삭제 오류: {e}"
+            )
+
+
+# ============================================================
+# 멤버 입장
 # ============================================================
 
 @bot.event
@@ -2140,6 +2277,10 @@ async def on_member_join(member):
         )
 
 
+# ============================================================
+# 멤버 퇴장
+# ============================================================
+
 @bot.event
 async def on_member_remove(member):
 
@@ -2156,12 +2297,12 @@ async def on_member_remove(member):
         )
 
 
+# ============================================================
+# 서버 입장
+# ============================================================
+
 @bot.event
 async def on_guild_join(guild):
-
-    get_guild_data(
-        guild.id
-    )
 
     try:
 
@@ -2201,12 +2342,11 @@ async def on_ready():
             f"❌ 명령어 동기화 실패: {e}"
         )
 
-    # 서버 데이터 준비
-    for guild in bot.guilds:
+    # ========================================================
+    # 정보 채널 업데이트
+    # ========================================================
 
-        get_guild_data(
-            guild.id
-        )
+    for guild in bot.guilds:
 
         try:
 
@@ -2217,11 +2357,28 @@ async def on_ready():
         except Exception as e:
 
             print(
-                f"❌ {guild.name}: {e}"
+                f"❌ {guild.name} "
+                f"정보 채널 오류: {e}"
             )
 
     print(
         f"📊 총 {len(bot.guilds)}개 서버 연결됨"
+    )
+
+
+# ============================================================
+# 에러
+# ============================================================
+
+@bot.event
+async def on_error(
+    event,
+    *args,
+    **kwargs
+):
+
+    print(
+        f"❌ 이벤트 오류: {event}"
     )
 
 
